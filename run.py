@@ -303,13 +303,14 @@ def main():
         engine_fps = 60
         # The window shows the port's own icon (BMP: the format SDL loads without extra libraries); on
         # Linux also an application id the desktop entry matches, so the shell shows the same icon.
-        icon_file = PORT / 'launcher' / 'spartanport.png'
+        # RnCPort: its own icon (docs/branding), 256 px so the macOS Dock shows it sharp.
+        icon_file = PORT / 'docs' / 'branding' / 'rncport-icon.png'
         if not WINDOWS:
-            env.setdefault('SDL_APP_ID', 'spartanport')
+            env.setdefault('SDL_APP_ID', 'rncport')
         try:
             from PIL import Image
             with Image.open(icon_file) as icon:
-                icon.convert('RGBA').resize((64, 64), Image.LANCZOS).save(out / 'window_icon.bmp')
+                icon.convert('RGBA').resize((256, 256), Image.LANCZOS).save(out / 'window_icon.bmp')
             env.setdefault('SPARTAN_WINDOW_ICON', str(out / 'window_icon.bmp'))
         except (ImportError, OSError):
             pass
