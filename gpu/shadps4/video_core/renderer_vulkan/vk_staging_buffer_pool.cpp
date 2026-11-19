@@ -42,6 +42,14 @@ StagingBufferPool::StagingBufferPool(const Instance& instance_, Scheduler& sched
     : instance{instance_}, scheduler{scheduler_} {
     const char* env = std::getenv("SPARTAN_STAGING_KEEP_MB");
     keep_blocks = (env ? std::strtoull(env, nullptr, 10) : 512) * 1_MB / BLOCK_SIZE;
+    // spartanport: LARGE_IDLE_FRAMES alone kept them forever at 1 FPS (8 GB Macs: ~1.9 GB of
+    // idle staging in Ratchet & Clank's first level).
+    if (const char* idle = std::getenv("SPARTAN_STAGING_LARGE_IDLE_MS")) {
+        large_idle_time = std::chrono::milliseconds(std::strtoull(idle, nullptr, 10));
+    }
+    if (const char* keep = std::getenv("SPARTAN_STAGING_LARGE_KEEP_MB")) {
+        large_keep_bytes = std::strtoull(keep, nullptr, 10) * 1_MB;
+    }
     Ring& ring = rings[u32(MemoryType::HostUncached)];
     for (u64 i = 0; i < PREWARM_BLOCKS; ++i) {
         auto& block = ring.blocks.emplace_back(Block{
@@ -134,6 +142,7 @@ StagingBufferRef StagingBufferPool::RequestLarge(u64 size, MemoryType type, bool
 
     best->tick = scheduler.CurrentTick();
     best->last_used_frame = frame;
+    best->last_used_time = std::chrono::steady_clock::now();
     best->held = deferred;
 
     VideoCore::Buffer& buffer = *best->buffer;
@@ -157,6 +166,7 @@ void StagingBufferPool::FreeDeferred(const StagingBufferRef& ref) {
     it->held = false;
     it->tick = scheduler.CurrentTick();
     it->last_used_frame = frame;
+    it->last_used_time = std::chrono::steady_clock::now();
 }
 
 void StagingBufferPool::TickFrame() {
@@ -191,10 +201,39 @@ void StagingBufferPool::TrimRing(Ring& ring) {
 }
 
 void StagingBufferPool::TrimLarge(std::vector<LargeBuffer>& cache) {
-    std::erase_if(cache, [this](const LargeBuffer& entry) {
-        return !entry.held && frame - entry.last_used_frame >= LARGE_IDLE_FRAMES &&
-               scheduler.IsFree(entry.tick);
+    const auto now = std::chrono::steady_clock::now();
+    // A few presented frames as well: uses recorded later than the request (deferred texture
+    // uploads) are not covered by the tick alone.
+    constexpr u64 MinIdleFrames = 8;
+    const auto idle = [this](const LargeBuffer& entry) {
+        return !entry.held && scheduler.IsFree(entry.tick) &&
+               frame - entry.last_used_frame >= MinIdleFrames;
+    };
+    std::erase_if(cache, [&](const LargeBuffer& entry) {
+        return idle(entry) && (frame - entry.last_used_frame >= LARGE_IDLE_FRAMES ||
+                               now - entry.last_used_time >= large_idle_time);
     });
+    if (large_keep_bytes == ~0ULL) {
+        return;
+    }
+    // Over the limit: free idle buffers, least recently used first.
+    u64 total = 0;
+    for (const LargeBuffer& entry : cache) {
+        total += entry.buffer->SizeBytes();
+    }
+    while (total > large_keep_bytes) {
+        auto oldest = cache.end();
+        for (auto it = cache.begin(); it != cache.end(); ++it) {
+            if (idle(*it) && (oldest == cache.end() || it->last_used_time < oldest->last_used_time)) {
+                oldest = it;
+            }
+        }
+        if (oldest == cache.end()) {
+            break;
+        }
+        total -= oldest->buffer->SizeBytes();
+        cache.erase(oldest);
+    }
 }
 
 void StagingBufferPool::PublishStats() const {

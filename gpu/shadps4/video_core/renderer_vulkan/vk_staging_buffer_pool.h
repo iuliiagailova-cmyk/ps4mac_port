@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <chrono>
+
 #include <array>
 #include <memory>
 #include <vector>
@@ -65,6 +67,7 @@ private:
         u64 tick;
         u64 last_used_frame;
         bool held;
+        std::chrono::steady_clock::time_point last_used_time; ///< spartanport
     };
 
     static constexpr size_t NUM_TYPES = 3;
@@ -85,6 +88,11 @@ private:
     u64 keep_blocks = 0; ///< spartanport: ring blocks never trimmed
     std::array<std::vector<LargeBuffer>, NUM_TYPES> large_caches;
     u64 frame = 0;
+    /// spartanport: dedicated buffers idle this long are freed whatever the frame rate, and
+    /// the idle ones beyond large_keep_bytes go first (SPARTAN_STAGING_LARGE_IDLE_MS,
+    /// SPARTAN_STAGING_LARGE_KEEP_MB).
+    std::chrono::milliseconds large_idle_time{30000};
+    u64 large_keep_bytes = ~0ULL;
 };
 
 } // namespace Vulkan
