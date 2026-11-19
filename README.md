@@ -79,7 +79,7 @@ RnCPort has only been run on an 8 GB M1. If you have an Apple Silicon Mac with *
 - Mac model, memory, macOS version;
 - Title ID and version of your dump (from `sce_sys/param.sfo`), e.g. CUSA01047 01.00;
 - how far the game got (menu, first level, gameplay) and the FPS you saw;
-- the log: run with `SPARTAN_FRAME_STATS=1` and redirect the output, e.g. `python3 run.py > rncport.log 2>&1`.
+- the log (frame statistics are on by default): `python3 run.py > rncport.log 2>&1`.
 
 A report that it works is just as useful as one that it fails.
 

@@ -235,6 +235,8 @@ def main():
     env.update(graphics_options.environment(graphics))
     # RnCPort: the project name in the window title and the in-game menu.
     env.setdefault('SPARTAN_APP_NAME', 'RnCPort')
+    # Frame statistics in the log (a few lines every few seconds): every report then has FPS.
+    env.setdefault('SPARTAN_FRAME_STATS', '1')
     # Ratchet & Clank (CUSA01047) waits on GPU results in memory (a busy loop until the GPU has
     # written them): it needs precise readbacks, unless its spartanport.ini says otherwise.
     ini = graphics_options.read_ini(env['SPARTAN_CONFIG'])
