@@ -127,6 +127,14 @@ static ABI int32_t kernel_gettimezone(GuestTimezone *tz) {
 #endif
     return 0;
 }
+static ABI int32_t local_to_utc(int64_t local,int64_t unused,int64_t *seconds,GuestTimezone *tz,int32_t *dst_seconds) {
+    (void)unused;
+    if (!tz) return ERR(22);
+    kernel_gettimezone(tz);
+    if (seconds) *seconds=local+(int64_t)(tz->minuteswest+tz->dsttime)*60;
+    if (dst_seconds) *dst_seconds=tz->dsttime*60;
+    return 0;
+}
 static ABI int32_t posix_gettimeofday(GuestTimeval *tv,GuestTimezone *tz) {
     struct timeval t;
     gettimeofday(&t,NULL);
@@ -172,6 +180,43 @@ static ABI int32_t module_info_from_addr(uint64_t address,int32_t flags,void *in
     return ERR(3); /* ESRCH: the runtime keeps no module records */
 }
 static ABI int32_t kernel_mlock(const void *address,uint64_t size) { (void)address; (void)size; return 0; }
+/* Same records as module_info_from_addr: none (Ratchet & Clank imports it for its unwinder). */
+static ABI int32_t module_info_for_unwind(uint64_t address,int32_t flags,uint64_t *info) {
+    (void)address;
+    if (flags>=3) return ERR(22);
+    if (!info) return ERR(14);
+    if (*info<72) return ERR(22); /* st_size of OrbisModuleInfoForUnwind */
+    return ERR(3);
+}
+/* Partially resident texture apertures (sceKernelSetPrtAperture): the PS4 keeps three windows in
+ * 0x1000000000..0xfc00000000. Recorded and reported; the runtime maps nothing for them yet. */
+#define PRT_START UINT64_C(0x1000000000)
+#define PRT_SIZE UINT64_C(0xec00000000)
+static struct { uint64_t address, size; } prt_apertures[3];
+static ABI int32_t set_prt_aperture(int32_t id,uint64_t address,uint64_t size) {
+    if (id<0 || id>=3) return ERR(22);
+    if (address<PRT_START || address+size>PRT_START+PRT_SIZE || address%4096) return ERR(22);
+    prt_apertures[id].address=address; prt_apertures[id].size=size;
+    printf("Runtime: PRT aperture %d at %#llx, %#llx bytes (recorded, not mapped)\n",id,
+           (unsigned long long)address,(unsigned long long)size);
+    return 0;
+}
+/* Local time conversions (shadPS4 kernel/time.cpp). OrbisTimesec is { time_t t; u32 west_sec, dst_sec; }. */
+typedef struct { int64_t t; uint32_t west_sec, dst_sec; } GuestTimesec;
+static ABI int32_t utc_to_local(int64_t utc,int64_t *local,GuestTimesec *st,uint64_t *dst_sec) {
+    long offset=0; int dst=0;
+#ifdef _WIN32
+    offset=(long)compat_utc_offset((time_t)utc);
+#else
+    time_t t=(time_t)utc; struct tm tm; localtime_r(&t,&tm);
+    offset=tm.tm_gmtoff; dst=tm.tm_isdst>0;
+#endif
+    const int32_t dst_value=dst ? 3600 : 0;
+    if (local) *local=utc+offset;
+    if (st) { st->t=utc; st->west_sec=(uint32_t)(int32_t)(offset-dst_value); st->dst_sec=(uint32_t)dst_value; }
+    if (dst_sec) *dst_sec=(uint64_t)dst_value;
+    return 0;
+}
 /* libc's C++ exception unwinder. The game does not throw (no __cxa_throw import): unwinding
  * finds no frame data, and resuming a context is a stop, never a silent success. */
 static ABI int32_t elf_phdr_match_addr(void *info,uint64_t address) { (void)info; (void)address; return 0; }
@@ -331,6 +376,8 @@ static const RuntimeExport exports[]={
     {"sceKernelPrintBacktraceWithModuleInfo",print_backtrace},
     {"getargc",get_argc}, {"getargv",get_argv}, {"sceKernelStopUnloadModule",stop_unload_module},
     {"sceKernelGetModuleInfoFromAddr",module_info_from_addr}, {"sceKernelMlock",kernel_mlock},
+    {"sceKernelGetModuleInfoForUnwind",module_info_for_unwind}, {"sceKernelSetPrtAperture",set_prt_aperture},
+    {"sceKernelConvertUtcToLocaltime",utc_to_local}, {"sceKernelConvertLocaltimeToUtc",local_to_utc},
     {"__elf_phdr_match_addr",elf_phdr_match_addr}, {"_is_signal_return",is_signal_return},
     {"__pthread_cxa_finalize",pthread_cxa_finalize}, {"sigreturn",unwind_resume},
     {"__Ux86_64_setcontext",unwind_resume},

@@ -7,6 +7,7 @@
 #define _GNU_SOURCE
 #include "runtime.h"
 #include "gpu/spartanportgpu.h"
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -167,6 +168,11 @@ static ABI void np_register_void(void *cb,void *arg) { (void)cb; (void)arg; }
 static ABI int32_t np_request(const void *param) { (void)param; return new_id(); }
 static ABI int32_t np_request_ctx(int32_t ctx,const void *param) { (void)ctx; (void)param; return new_id(); }
 static ABI int32_t np_poll(int32_t request,int32_t *result) { (void)request; if (result) *result=NP_SIGNED_OUT; return 0; }
+static ABI int32_t np_has_signed_up(int32_t user,uint8_t *signed_up) {
+    (void)user;
+    if (!signed_up) return NP_INVALID_ARGUMENT;
+    *signed_up=0; return 0;
+}
 static ABI int32_t np_compare(const void *a,const void *b) {
     if (!a || !b) return NP_INVALID_ARGUMENT;
     return memcmp(a,b,16) ? (int32_t)0x80550609 : 0; /* NP_UTIL NOT_MATCH */
@@ -186,7 +192,9 @@ static ABI int32_t voice_info(uint32_t port,uint32_t *info) {
 /* ---- Common dialogs: nothing is displayed; an opened dialog finishes. ---- */
 typedef struct { const char *name; int initialized, status; uint32_t button; } Dialog;
 static Dialog dialogs[]={{"CommonDialog",0,0,0},{"MsgDialog",0,0,0},{"SaveDataDialog",0,0,0},
-                         {"NpProfileDialog",0,0,0},{"NpCommerceDialog",0,0,0},{"ImeDialog",0,0,0}};
+                         {"NpProfileDialog",0,0,0},{"NpCommerceDialog",0,0,0},{"ImeDialog",0,0,0},
+                         {"InvitationDialog",0,0,0},{"GameCustomDataDialog",0,0,0},
+                         {"NpSnsFacebookDialog",0,0,0}};
 #define DIALOG_RUNNING 2
 #define DIALOG_FINISHED 3
 #define DIALOG_NOT_FINISHED ((int32_t)0x80B80005)
@@ -236,7 +244,12 @@ static int32_t dialog_term(int i) {
     static ABI int32_t tag##_open(const void *p) { (void)p; return dialog_open(i); } \
     static ABI int32_t tag##_status(void) { return dialog_status(i); } \
     static ABI int32_t tag##_term(void) { return dialog_term(i); }
-DIALOG(profile,3) DIALOG(commerce,4)
+DIALOG(profile,3) DIALOG(commerce,4) DIALOG(invitation,6) DIALOG(custom_data,7) DIALOG(facebook,8)
+/* Results begin with the result code and the button (all these dialogs). */
+static ABI int32_t commerce_result(void *out) { return dialog_result(4,out,0); }
+static ABI int32_t invitation_result(void *out) { return dialog_result(6,out,0); }
+static ABI int32_t custom_data_result(void *out) { return dialog_result(7,out,0); }
+static ABI int32_t facebook_result(void *out) { return dialog_result(8,out,0); }
 /* OrbisMsgDialogParam: BaseParam (48 bytes), size, mode (2 = progress bar).
  * OrbisSaveDataDialogParam: BaseParam, int32 size, mode (5 = progress bar). */
 static int32_t dialog_open_mode(int i, const unsigned char *param, size_t mode_offset, uint32_t progress_mode) {
@@ -448,6 +461,11 @@ static ABI int32_t trophy_game_info(int32_t ctx,int32_t handle,void *details,voi
     if (data) { uint64_t size; memcpy(&size,data,8); memset((char *)data+8,0,size>8 && size<4096 ? size-8 : 0); }
     return 0;
 }
+static ABI int32_t trophy_group_info(int32_t ctx,int32_t handle,int32_t group,void *details,void *data) {
+    (void)group; return trophy_game_info(ctx,handle,details,data);
+}
+/* No trophy package icons are installed (ORBIS_NP_TROPHY_ERROR_ICON_FILE_NOT_FOUND). */
+static ABI int32_t trophy_icon(void) { return (int32_t)0x80551614; }
 static ABI int32_t trophy_info(int32_t ctx,int32_t handle,int32_t id,void *details,void *data) {
     (void)id; return trophy_game_info(ctx,handle,details,data);
 }
@@ -543,6 +561,64 @@ static ABI int32_t mouse_read(int32_t handle,unsigned char *data,int32_t count) 
 static ABI int32_t mouse_close(int32_t handle) { (void)handle; return 0; }
 static ABI int32_t audio_in_open(void) { return AUDIO_IN_NOT_OPENED; }
 
+
+/* ---- Ratchet & Clank (CUSA01047) additions ---- */
+/* POSIX sockets of libScePosix: the network is down. FreeBSD errno: ENETDOWN 50, EBADF 9. */
+static ABI int32_t posix_net_down(void) { *runtime_errno()=50; return -1; }
+static ABI int32_t posix_bad_socket(void) { *runtime_errno()=9; return -1; }
+typedef struct { int64_t sec, usec; } GuestTimeval;
+/* select: no socket can be ready; the timeout is honoured so polling loops keep their pace. */
+static ABI int32_t posix_select(int nfds,void *r,void *w,void *e,const GuestTimeval *timeout) {
+    const size_t bytes=nfds>0 ? ((size_t)nfds+7)/8 : 0;
+    if (r) memset(r,0,bytes);
+    if (w) memset(w,0,bytes);
+    if (e) memset(e,0,bytes);
+    if (!timeout) return posix_bad_socket();
+    if (timeout->sec>0 || timeout->usec>0) {
+        struct timespec t={.tv_sec=(time_t)timeout->sec,.tv_nsec=(long)(timeout->usec*1000)};
+        nanosleep(&t,NULL);
+    }
+    return 0;
+}
+/* FreeBSD AF_INET 2, AF_INET6 28 (EAFNOSUPPORT 47). */
+static ABI int32_t posix_inet_pton(int af,const char *src,void *dst) {
+    if (af==2) return inet_pton(AF_INET,src,dst);
+    if (af==28) return inet_pton(AF_INET6,src,dst);
+    *runtime_errno()=47; return -1;
+}
+static ABI const char *posix_inet_ntop(int af,const void *src,char *dst,uint32_t size) {
+    if (af==2) return inet_ntop(AF_INET,src,dst,size);
+    if (af==28) return inet_ntop(AF_INET6,src,dst,size);
+    *runtime_errno()=47; return NULL;
+}
+static ABI int32_t netctl_result(int32_t event,int32_t *error) { (void)event; if (error) *error=0; return 0; }
+/* RFC 3986 percent-encoding of everything but unreserved characters (shadPS4 network/http.cpp). */
+static ABI int32_t http_uri_escape(char *out,uint64_t *require,uint64_t prepare,const char *in) {
+    if (!in) return (int32_t)0x804311fe; /* INVALID_VALUE */
+    uint64_t needed=1;
+    for (const unsigned char *p=(const unsigned char *)in;*p;++p)
+        needed+=(isalnum(*p) || *p=='-' || *p=='_' || *p=='.' || *p=='~') ? 1 : 3;
+    if (require) *require=needed;
+    if (!out) return 0;
+    if (prepare<needed) return (int32_t)0x80431022; /* OUT_OF_MEMORY */
+    static const char hex[]="0123456789ABCDEF";
+    for (const unsigned char *p=(const unsigned char *)in;*p;++p) {
+        if (isalnum(*p) || *p=='-' || *p=='_' || *p=='.' || *p=='~') *out++=(char)*p;
+        else { *out++='%'; *out++=hex[*p>>4]; *out++=hex[*p&15]; }
+    }
+    *out=0;
+    return 0;
+}
+static ABI int32_t playgo_prefetch(int32_t handle,const uint16_t *ids,uint32_t count,int32_t ignorable) {
+    (void)ids; (void)count; (void)ignorable;
+    return handle==playgo_handle && handle ? 0 : PLAYGO_BAD_HANDLE;
+}
+static ABI int32_t playgo_eta(int32_t handle,const uint16_t *ids,uint32_t count,int64_t *eta) {
+    (void)ids; (void)count;
+    if (handle!=playgo_handle || !handle) return PLAYGO_BAD_HANDLE;
+    if (!eta) return PLAYGO_BAD_POINTER;
+    *eta=0; return 0; /* everything is installed */
+}
 
 static const RuntimeExport exports[]={
     {"sceUserServiceInitialize",user_initialize}, {"sceUserServiceTerminate",user_terminate},
@@ -668,5 +744,64 @@ static const RuntimeExport exports[]={
     {"sceAudioInOpen",audio_in_open},
     {"sceDiscMapIsRequestOnHDD",discmap_on_hdd}, {"sceDiscMap_8A828CAEE7EDD5E9",discmap_8a82},
     {"sceVoiceInit",ok_void}, {"sceVoiceEnd",ok_void},
+    /* Ratchet & Clank (CUSA01047): PSN services offline, sockets down, dialogs finish at once. */
+    {"sceNpTusCreateNpTitleCtx",np_request}, {"sceNpTusDeleteNpTitleCtx",ok_void},
+    {"sceNpTusCreateRequest",np_request_ctx}, {"sceNpTusDeleteRequest",ok_void}, {"sceNpTusPollAsync",np_poll},
+    {"sceNpTusGetFriendsVariableAsync",np_signed_out}, {"sceNpTssGetData",np_signed_out},
+    {"sceNpTusSetMultiSlotVariable",np_signed_out}, {"sceNpTusSetMultiSlotVariableVUser",np_signed_out},
+    {"sceNpTusGetMultiSlotVariable",np_signed_out}, {"sceNpTusGetMultiSlotVariableVUser",np_signed_out},
+    {"sceNpTusAddAndGetVariable",np_signed_out}, {"sceNpTusAddAndGetVariableVUser",np_signed_out},
+    {"sceNpTusSetData",np_signed_out}, {"sceNpTusSetDataVUser",np_signed_out},
+    {"sceNpTusGetData",np_signed_out}, {"sceNpTusGetDataVUser",np_signed_out},
+    {"sceNpTusDeleteMultiSlotData",np_signed_out}, {"sceNpTusDeleteMultiSlotDataVUser",np_signed_out},
+    {"sceNpLookupCreateRequest",np_request_ctx},
+    {"sceNpBandwidthTestInitStart",np_signed_out}, {"sceNpBandwidthTestGetStatus",np_signed_out},
+    {"sceNpBandwidthTestShutdown",np_signed_out},
+    {"sceNpWordFilterCreateTitleCtx",np_request}, {"sceNpWordFilterDeleteTitleCtx",ok_void},
+    {"sceNpWordFilterCreateRequest",np_request_ctx}, {"sceNpWordFilterCreateAsyncRequest",np_request_ctx},
+    {"sceNpWordFilterDeleteRequest",ok_void}, {"sceNpWordFilterAbortRequest",ok_void},
+    {"sceNpWordFilterPollAsync",np_poll},
+    {"sceNpWordFilterCensorComment",np_signed_out}, {"sceNpWordFilterSanitizeComment",np_signed_out},
+    {"sceNpScoreRecordScoreAsync",np_signed_out}, {"sceNpScoreRecordGameDataAsync",np_signed_out},
+    {"sceNpScoreGetGameDataAsync",np_signed_out}, {"sceNpScoreGetRankingByNpId",np_signed_out},
+    {"sceNpScoreGetRankingByNpIdAsync",np_signed_out}, {"sceNpScoreGetRankingByRangeAsync",np_signed_out},
+    {"sceNpScoreGetFriendsRanking",np_signed_out}, {"sceNpScoreGetFriendsRankingAsync",np_signed_out},
+    {"sceNpScorePollAsync",np_poll},
+    {"sceNpMatching2SetUserInfo",np_signed_out}, {"sceNpMatching2RegisterRoomMessageCallback",ok_void},
+    {"sceNpMatching2GetUserInfoList",np_signed_out}, {"sceNpMatching2SendRoomMessage",np_signed_out},
+    {"sceNpMatching2GetRoomDataExternalList",np_signed_out}, {"sceNpMatching2GetRoomDataInternal",np_signed_out},
+    {"sceNpMatching2GetRoomMemberDataInternal",np_signed_out}, {"sceNpMatching2SendRoomChatMessage",np_signed_out},
+    {"sceNpHasSignedUp",np_has_signed_up}, {"sceNpGetUserIdByOnlineId",np_signed_out},
+    {"sceNpInGameMessageInitialize",np_request}, {"sceNpInGameMessageTerminate",ok_void},
+    {"sceNpInGameMessageCreateHandle",np_request}, {"sceNpInGameMessageDeleteHandle",ok_void},
+    {"sceNpInGameMessagePrepare",np_signed_out}, {"sceNpInGameMessageSendData",np_signed_out},
+    {"sceNpWebApiCreateHandle",np_request}, {"sceNpWebApiDeleteHandle",ok_void},
+    {"sceNpWebApiCreateServicePushEventFilter",np_request}, {"sceNpWebApiDeleteServicePushEventFilter",ok_void},
+    {"sceNpWebApiRegisterServicePushEventCallback",np_request},
+    {"sceNpWebApiUnregisterServicePushEventCallback",ok_void}, {"sceNpWebApiSendRequest2",np_signed_out},
+    {"sceNpSnsFacebookCreateRequest",np_request}, {"sceNpSnsFacebookDeleteRequest",ok_void},
+    {"sceNpSnsFacebookGetAccessToken",np_signed_out},
+    {"sceNpAuthCreateRequest",np_request},
+    {"sceNpCommerceDialogGetResult",commerce_result},
+    {"sceInvitationDialogInitialize",invitation_init}, {"sceInvitationDialogOpen",invitation_open},
+    {"sceInvitationDialogUpdateStatus",invitation_status}, {"sceInvitationDialogTerminate",invitation_term},
+    {"sceInvitationDialogGetResult",invitation_result},
+    {"sceGameCustomDataDialogInitialize",custom_data_init}, {"sceGameCustomDataDialogOpen",custom_data_open},
+    {"sceGameCustomDataDialogUpdateStatus",custom_data_status}, {"sceGameCustomDataDialogTerminate",custom_data_term},
+    {"sceGameCustomDataDialogGetResult",custom_data_result},
+    {"sceNpSnsFacebookDialogInitialize",facebook_init}, {"sceNpSnsFacebookDialogOpen",facebook_open},
+    {"sceNpSnsFacebookDialogUpdateStatus",facebook_status}, {"sceNpSnsFacebookDialogTerminate",facebook_term},
+    {"sceNpSnsFacebookDialogGetResult",facebook_result},
+    {"sceNpTrophyGetTrophyIcon",trophy_icon}, {"sceNpTrophyGetGroupIcon",trophy_icon},
+    {"sceNpTrophyGetGameIcon",trophy_icon}, {"sceNpTrophyGetGroupInfo",trophy_group_info},
+    {"sceNetCtlInit",ok_void}, {"sceNetCtlTerm",ok_void}, {"sceNetCtlGetResult",netctl_result},
+    {"sceHttpUriEscape",http_uri_escape},
+    {"scePlayGoPrefetch",playgo_prefetch}, {"scePlayGoGetEta",playgo_eta},
+    {"socket",posix_net_down}, {"connect",posix_net_down}, {"bind",posix_bad_socket},
+    {"listen",posix_bad_socket}, {"accept",posix_bad_socket}, {"shutdown",posix_bad_socket},
+    {"getsockname",posix_bad_socket}, {"setsockopt",posix_bad_socket},
+    {"send",posix_bad_socket}, {"sendto",posix_bad_socket}, {"recv",posix_bad_socket},
+    {"recvfrom",posix_bad_socket}, {"select",posix_select},
+    {"inet_pton",posix_inet_pton}, {"inet_ntop",posix_inet_ntop},
 };
 uintptr_t runtime_services_resolve(const char *name) { return RUNTIME_LOOKUP(exports,name); }

@@ -1170,6 +1170,13 @@ int main(int argc, char **argv) {
          * library: without --cpu-only its symbols are registered above). */
         unsigned char *checked=calloc(import_count ? import_count : 1,1);
         if (!checked) fail("allocation failed");
+        /* SPARTAN_IMPORT_MAP=1: the image offset each import is written to (its GOT slot), to
+         * name the PLT stubs a disassembly calls. */
+        if (getenv("SPARTAN_IMPORT_MAP"))
+            for (uint64_t i=0;i<nr;++i)
+                if (relocs[i].kind)
+                    printf("IMPORT_SLOT: 0x%llx %s %s\n",(unsigned long long)relocs[i].target,
+                           names[relocs[i].value],runtime_import_name(names[relocs[i].value]));
         uint64_t missing=0;
         for (uint64_t i=0;i<nr;++i) {
             uint64_t index=relocs[i].value;

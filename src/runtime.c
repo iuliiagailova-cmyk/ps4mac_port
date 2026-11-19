@@ -76,6 +76,7 @@ void runtime_report(void) {
     runtime_mutex_report();
     runtime_rwlock_report();
     runtime_sema_report();
+    runtime_sync_report();
     runtime_content_report();
     runtime_memory_report();
     runtime_ajm_report();
@@ -237,6 +238,8 @@ uintptr_t runtime_resolve(const char *name, int is_data) {
     if (memory) return memory;
     uintptr_t kernel = runtime_kernel_resolve(name);
     if (kernel) return kernel;
+    uintptr_t sync = runtime_sync_resolve(name);
+    if (sync) return sync;
     uintptr_t services = runtime_services_resolve(name);
     if (services) return services;
     uintptr_t ajm = runtime_ajm_resolve(name);

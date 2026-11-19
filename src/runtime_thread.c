@@ -416,6 +416,22 @@ static ABI int32_t posix_attr_set_param(ThreadAttr **a,const int *p) { return po
 static ABI int32_t posix_create(GuestThread **t,ThreadAttr **a,GuestEntry e,void *arg) { return posix(create(t,a,e,arg,"posix")); }
 static ABI int32_t posix_create_name(GuestThread **t,ThreadAttr **a,GuestEntry e,void *arg,const char *name) { return posix(create(t,a,e,arg,name)); }
 static ABI int32_t posix_join(GuestThread *t,void **r) { return posix(thread_join(t,r)); }
+/* Scheduling parameters (Ratchet & Clank): recorded like scePthreadSetprio, not enforced.
+ * struct sched_param is { int sched_priority; }. */
+static ABI int32_t thread_get_sched(GuestThread *t,int *policy,int *param) {
+    if (!find_thread(t)) return ERR(3);
+    if (!policy || !param) return ERR(22);
+    *policy=t->attr.policy; *param=t->attr.prio; return 0;
+}
+static ABI int32_t thread_set_sched(GuestThread *t,int policy,const int *param) {
+    if (!find_thread(t)) return ERR(3);
+    if (!param) return ERR(22);
+    t->attr.policy=policy; t->attr.prio=*param; return 0;
+}
+static ABI int32_t posix_yield(void) { return thread_yield(); }
+static ABI int32_t posix_attr_set_inherit(ThreadAttr **a,int inherit) { return posix(attr_set_inherit(a,inherit)); }
+static ABI int32_t posix_set_prio(GuestThread *t,int prio) { return posix(thread_set_prio(t,prio)); }
+static ABI int32_t posix_set_sched(GuestThread *t,int policy,const int *param) { return posix(thread_set_sched(t,policy,param)); }
 
 uintptr_t runtime_thread_resolve(const char *name) {
     static const struct { const char *nid; void *fn; } table[]={
@@ -438,6 +454,9 @@ uintptr_t runtime_thread_resolve(const char *name) {
         {"euKRgm0Vn2M#libkernel",posix_attr_set_param}, {"OxhIB8LB-PQ#libkernel",posix_create},
         {"Jmi+9w9u0E4#libkernel",posix_create_name}, {"h9CcP3J0oVM#libkernel",posix_join},
         {"FJrT5LuUBAU#libkernel",thread_exit},
+        {"P41kTWUS3EI#libkernel",thread_get_sched}, {"oIRFTjoILbg#libkernel",thread_set_sched},
+        {"B5GmVDKwpn0#libkernel",posix_yield}, {"7ZlAakEf0Qg#libkernel",posix_attr_set_inherit},
+        {"a2P9wYGeZvc#libkernel",posix_set_prio}, {"Xs9hdiD7sAA#libkernel",posix_set_sched},
     };
     for (size_t i=0;i<sizeof(table)/sizeof(*table);++i)
         if (!strcmp(name,table[i].nid)) return (uintptr_t)table[i].fn;

@@ -144,7 +144,62 @@ static ABI int32_t rtc_rfc2822_local(char *out, const uint64_t *utc_tick) {
     return 0;
 }
 
+/* Date parsing (Ratchet & Clank). RFC 3339: YYYY-MM-DDThh:mm:ss[.fraction](Z|+hh:mm|-hh:mm);
+ * RFC 2822: [Day, ]DD Mon YYYY hh:mm:ss (GMT|UT|Z|+hhmm|-hhmm). The result is a UTC tick. */
+#define ERR_INVALID_VALUE ((int32_t)0x80B50003)
+static int32_t make_tick(int y,int mo,int d,int h,int mi,int s,uint32_t us,int offset_minutes,uint64_t *tick) {
+    DateTime t={(uint16_t)y,(uint16_t)mo,(uint16_t)d,(uint16_t)h,(uint16_t)mi,(uint16_t)s,us};
+    const int32_t e=validate(&t);
+    if (e) return e;
+    *tick=to_tick(&t)-(uint64_t)((int64_t)offset_minutes*60000000);
+    return 0;
+}
+static int32_t parse_rfc3339(const char *in,uint64_t *tick) {
+    int y,mo,d,h,mi,s,n=0;
+    if (sscanf(in,"%4d-%2d-%2d%*[Tt ]%2d:%2d:%2d%n",&y,&mo,&d,&h,&mi,&s,&n)!=6 || !n) return ERR_INVALID_VALUE;
+    const char *p=in+n;
+    uint32_t us=0;
+    if (*p=='.') {
+        uint32_t scale=100000;
+        for (++p;*p>='0' && *p<='9';++p) { us+=(uint32_t)(*p-'0')*scale; scale/=10; }
+    }
+    int offset=0;
+    if (*p=='Z' || *p=='z') ++p;
+    else if (*p=='+' || *p=='-') {
+        int oh,om;
+        if (sscanf(p+1,"%2d:%2d",&oh,&om)!=2) return ERR_INVALID_VALUE;
+        offset=(oh*60+om)*(*p=='-' ? -1 : 1);
+        p+=6;
+    } else return ERR_INVALID_VALUE;
+    return make_tick(y,mo,d,h,mi,s,us,offset,tick);
+}
+static int32_t parse_rfc2822(const char *in,uint64_t *tick) {
+    static const char *months[]={"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
+    const char *p=strchr(in,',');
+    p=p ? p+1 : in;
+    int d,y,h,mi,s=0; char mon[4]={0}, zone[8]={0};
+    if (sscanf(p," %d %3s %d %d:%d:%d %7s",&d,mon,&y,&h,&mi,&s,zone)<6) return ERR_INVALID_VALUE;
+    int mo=0;
+    for (int i=0;i<12;++i) if (!strcmp(mon,months[i])) mo=i+1;
+    if (!mo) return ERR_INVALID_VALUE;
+    int offset=0;
+    if (zone[0]=='+' || zone[0]=='-') {
+        int v=0;
+        if (sscanf(zone+1,"%4d",&v)!=1) return ERR_INVALID_VALUE;
+        offset=(v/100*60+v%100)*(zone[0]=='-' ? -1 : 1);
+    }
+    return make_tick(y,mo,d,h,mi,s,0,offset,tick);
+}
+static ABI int32_t rtc_parse_rfc3339(uint64_t *tick,const char *in) {
+    if (!tick || !in) return ERR_INVALID_POINTER;
+    return parse_rfc3339(in,tick);
+}
+static ABI int32_t rtc_parse_datetime(uint64_t *tick,const char *in) {
+    if (!tick || !in) return ERR_INVALID_POINTER;
+    return parse_rfc3339(in,tick) ? parse_rfc2822(in,tick) : 0;
+}
 static const RuntimeExport exports[]={
+    {"sceRtcParseRFC3339",rtc_parse_rfc3339}, {"sceRtcParseDateTime",rtc_parse_datetime},
     {"sceRtcGetCurrentClockLocalTime",rtc_current_local}, {"sceRtcGetCurrentClock",rtc_current_clock},
     {"sceRtcGetCurrentTick",rtc_current_tick}, {"sceRtcGetCurrentNetworkTick",rtc_current_tick},
     {"sceRtcConvertUtcToLocalTime",rtc_utc_to_local}, {"sceRtcConvertLocalTimeToUtc",rtc_local_to_utc},

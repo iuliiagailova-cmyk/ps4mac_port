@@ -57,6 +57,8 @@ typedef struct { const char *name; void *function; } RuntimeExport;
 const char *runtime_symbol(const char *nid);
 uintptr_t runtime_lookup(const RuntimeExport *table, size_t count, const char *nid);
 uintptr_t runtime_kernel_resolve(const char *name);
+uintptr_t runtime_sync_resolve(const char *name);
+void runtime_sync_report(void);
 uintptr_t runtime_file_resolve(const char *name);
 uintptr_t runtime_services_resolve(const char *name);
 void runtime_file_report(void);
