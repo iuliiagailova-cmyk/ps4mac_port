@@ -27,7 +27,7 @@ On the same Mac the game did not boot at all before: shadPS4 stops at an access 
 ## Requirements
 
 - Apple Silicon Mac (M1 or newer), **macOS 26 or newer**, Rosetta 2.
-- A decrypted dump of your own disc (`eboot.bin` starting with `7F 45 4C 46`), base game only. On a PS4 with GoldHEN, Itemzflow → *Dump* → *Base Game Only* produces one.
+- A dump of **your own** copy of the game from your own PS4 (base game; the decrypted `eboot.bin` starts with `7F 45 4C 46`). No game files are included or linked here.
 - For building: Xcode Command Line Tools, Homebrew, about 2 GB for the x86-64 dependencies.
 - **Memory:** with 8 GB the game runs out of memory in the first level (see [Known issues](#known-issues)). 16 GB or more should fit both copies of the game's memory, but **this is not tested yet** — reports are very welcome.
 
