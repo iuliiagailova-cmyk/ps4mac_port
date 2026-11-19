@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstdio>
 #include <cstdlib>
 #include <numeric>
 #include <string_view>
@@ -162,6 +163,11 @@ Buffer::Buffer(const Vulkan::Instance& instance, VAddr cpu_addr_, u64 size_bytes
     };
     VmaAllocationInfo alloc_info{};
     buffer.Create(buffer_ci, mem_type, &alloc_info);
+    // spartanport: large GPU buffers, for memory diagnostics.
+    if (size_bytes >= (32ull << 20) && mem_type != MemoryType::Sparse) {
+        std::printf("GPU buffer: %llu MiB (%s, type %d)\n", (unsigned long long)(size_bytes >> 20),
+                    debug_name.empty() ? "unnamed" : std::string(debug_name).c_str(), int(mem_type));
+    }
 
     const auto device = instance.GetDevice();
     if (!debug_name.empty()) {

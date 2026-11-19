@@ -25,6 +25,8 @@
 #include <vulkan/vulkan_format_traits.hpp>
 #include "video_core/texture_cache/tile_manager.h"
 
+#include <vk_mem_alloc.h>
+
 namespace VideoCore {
 
 static constexpr u64 PageShift = 12;
@@ -1451,6 +1453,7 @@ void TextureCache::RegisterImage(ImageId image_id) {
     image.flags |= ImageFlagBits::Registered;
     ++registry_generation;
     total_used_memory += Common::AlignUp(image.info.guest_size, 1024);
+    SpartanStats::image_bytes.fetch_add(Common::AlignUp(image.info.guest_size, 1024), std::memory_order_relaxed);
     image.lru_id = lru_cache.Insert(image_id, gc_tick);
     image.lru_touched_tick = gc_tick;
 
@@ -1487,6 +1490,7 @@ void TextureCache::UnregisterImage(ImageId image_id) {
     ++registry_generation;
     lru_cache.Free(image.lru_id);
     total_used_memory -= Common::AlignUp(image.info.guest_size, 1024);
+    SpartanStats::image_bytes.fetch_sub(Common::AlignUp(image.info.guest_size, 1024), std::memory_order_relaxed);
     ForEachPage(image.info.guest_address, image.info.guest_size, [this, image_id](u64 page) {
         const auto page_it = page_table.find(page);
         if (page_it == nullptr) {
@@ -1703,12 +1707,19 @@ void TextureCache::GarbageCollectImages() {
     if (pressured || gc_downloads != 0) {
         const auto now = std::chrono::steady_clock::now();
         if (now - gc_report_time >= std::chrono::seconds(5)) {
+            VmaTotalStatistics vma_stats{};
+            vmaCalculateStatistics(instance.GetAllocator(), &vma_stats);
             std::printf("Texture cache: memory pressure, %llu of %llu MiB (critical %llu): "
-                        "%llu images evicted, %llu written back since the last report\n",
+                        "%llu images evicted, %llu written back since the last report; "
+                        "images %llu MiB, buffer arenas %llu MiB, VMA %llu MiB in %u allocations\n",
                         (unsigned long long)(total_used_memory >> 20),
                         (unsigned long long)(pressure_gc_memory >> 20),
                         (unsigned long long)(critical_gc_memory >> 20),
-                        (unsigned long long)gc_evictions, (unsigned long long)gc_downloads);
+                        (unsigned long long)gc_evictions, (unsigned long long)gc_downloads,
+                        (unsigned long long)(SpartanStats::image_bytes.load() >> 20),
+                        (unsigned long long)(SpartanStats::arena_resident_bytes.load() >> 20),
+                        (unsigned long long)(vma_stats.total.statistics.blockBytes >> 20),
+                        vma_stats.total.statistics.allocationCount);
             gc_report_time = now;
             gc_evictions = gc_downloads = 0;
         }
