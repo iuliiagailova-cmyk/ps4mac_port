@@ -226,6 +226,8 @@ def main():
     if reverted:
         print('Graphics: the last restart never reached the game; previous options restored', flush=True)
     env.update(graphics_options.environment(graphics))
+    # RnCPort: the project name in the window title and the in-game menu.
+    env.setdefault('SPARTAN_APP_NAME', 'RnCPort')
     # Ratchet & Clank (CUSA01047) waits on GPU results in memory (a busy loop until the GPU has
     # written them): it needs precise readbacks, unless its spartanport.ini says otherwise.
     ini = graphics_options.read_ini(env['SPARTAN_CONFIG'])

@@ -269,8 +269,10 @@ extern "C" int spartanportgpu_init(const SpartanGpuConfig* config) {
     if (config->user_dir) setenv("SPARTAN_GPU_USER_DIR", config->user_dir, 0);
 #endif
     Core::Emulator::FillElfInfo(*config);
-    // The window carries the project name; the dump's own title stays in ElfInfo (above).
-    const std::string title = "SpartanPort";
+    // The window carries the project name (SPARTAN_APP_NAME, set by run.py); the dump's own title
+    // stays in ElfInfo (above).
+    const char* app_name = std::getenv("SPARTAN_APP_NAME");
+    const std::string title = app_name && *app_name ? app_name : "SpartanPort";
     const s32 width = config->width, height = config->height;
 #ifdef __APPLE__
     {
