@@ -19,7 +19,7 @@ An unofficial, experimental native-runtime port of **Ratchet & Clank (2016, PS4)
 | PS4 controller | ✅ |
 | Main menu, New Game / Continue, save data | ✅ (menu at 30 FPS) |
 | First level loads, its cutscene plays | ✅ |
-| Playable frame rate in the level | ❌ on 8 GB: about 1 FPS — see [Known issues](#known-issues) |
+| First level, gameplay after the cutscene | ✅ playable on 8 GB, but slow: about 7–10 FPS in gameplay, 30 FPS in lighter scenes |
 | Other regions (CUSA01073, CUSA01928), patch 01.09 | not tested |
 
 On the same Mac the game did not boot at all before: shadPS4 stops at an access to `0x1000000068`. What it took is listed in [What RnCPort changes](#what-rncport-changes).
@@ -29,7 +29,7 @@ On the same Mac the game did not boot at all before: shadPS4 stops at an access 
 - Apple Silicon Mac (M1 or newer), **macOS 26 or newer**, Rosetta 2.
 - A dump of **your own** copy of the game from your own PS4 (base game; the decrypted `eboot.bin` starts with `7F 45 4C 46`). No game files are included or linked here.
 - For building: Xcode Command Line Tools, Homebrew, about 2 GB for the x86-64 dependencies.
-- **Memory:** with 8 GB the game runs out of memory in the first level (see [Known issues](#known-issues)). 16 GB or more should fit both copies of the game's memory, but **this is not tested yet** — reports are very welcome.
+- **Memory:** 8 GB works but is tight (see [Known issues](#known-issues)); 16 GB or more is **not tested yet** — reports are very welcome.
 
 ## Build and run
 
@@ -64,11 +64,14 @@ The game profile (patch `Bug Fix - Address Space Base`, precise readbacks) is ap
 - **~140 runtime functions** the game needs beyond God of War III: event flags and POSIX semaphores, thread scheduling parameters, time conversions, RFC 3339/2822 date parsing, and offline PSN services, dialogs, sockets and PlayGo.
 - **Runtime fixes:** the thread handle starts with a non-zero thread id (the game reads it right after `pthread_create`), timed waits carry a deadline of exactly one second, GPU commands may carry more than 128 KiB of data, the queue of GPU memory notifications grows as needed.
 - **Precise readbacks by default** for this game: it busy-waits until the GPU has written results to memory.
+- **GPU memory on 8 GB Macs:** large upload buffers are freed after a few seconds idle instead of after 3000 frames (never, at 1 FPS); about 1.9 GB of idle staging took the first level from ~1 FPS to 30 FPS.
+- **KosmicKrisp fix** ([`packaging/macos/kosmickrisp-allocator-reset.patch`](packaging/macos/kosmickrisp-allocator-reset.patch)): Metal 4 command allocators are reset when reused; they kept every command ever encoded and crashed Metal after a few minutes at 30 FPS.
+- **PRT apertures** are mapped for the GPU, as in shadPS4.
 - **Diagnostics:** `SPARTAN_THREAD_TRACE=1`, `SPARTAN_IMPORT_MAP=1` (with `--check-imports`), `SPARTAN_LAUNCH_PREFIX` (start under a debugger).
 
 ## Known issues
 
-- **Memory on 8 GB Macs.** The game uses about 4.7 GB of PS4 direct memory, and the GPU layer keeps its own copies of that memory in Vulkan buffers. On 8 GB of unified memory the two copies do not fit: macOS swaps and the GPU takes about a second per frame. A lower texture cache budget does not help (the copies are buffers, not textures). The planned fix is to let the GPU use the game's memory directly (`VK_EXT_external_memory_host`, which KosmicKrisp implements with `newBufferWithBytesNoCopy`).
+- **Memory on 8 GB Macs.** GPU memory is about 3.5–4 GB in the first level and macOS swaps; gameplay runs at about 7–10 FPS. The GPU layer still keeps copies of guest memory in Vulkan buffers (~1.2 GB) and a 512 MB address table.
 - **Occasional black screen at start** (a race between threads, not yet found).
 - Only the EU base game is tested.
 
