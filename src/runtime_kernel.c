@@ -197,7 +197,10 @@ static ABI int32_t set_prt_aperture(int32_t id,uint64_t address,uint64_t size) {
     if (id<0 || id>=3) return ERR(22);
     if (address<PRT_START || address+size>PRT_START+PRT_SIZE || address%4096) return ERR(22);
     prt_apertures[id].address=address; prt_apertures[id].size=size;
-    printf("Runtime: PRT aperture %d at %#llx, %#llx bytes (recorded, not mapped)\n",id,
+    /* As shadPS4: the whole aperture counts as mapped for the GPU (sparse textures read zeros
+     * where nothing is mapped yet); without it the GPU faulted on partially mapped textures. */
+    if (size) runtime_memory_gpu_map((uintptr_t)address,size);
+    printf("Runtime: PRT aperture %d at %#llx, %#llx bytes (mapped for the GPU)\n",id,
            (unsigned long long)address,(unsigned long long)size);
     return 0;
 }

@@ -318,6 +318,16 @@ static void queue_hook(int kind, uintptr_t address, uint64_t size) {
     }
     pending[pending_count++]=(PendingHook){kind,address,size};
 }
+static void flush_hooks(void);
+/* Tells the GPU that [address, address+size) is mapped, whatever the guest has mapped there
+ * (PRT apertures: shadPS4's MemoryManager::SetPrtArea). Its reads of unmapped pages return zeros
+ * (CopySparseMemory), and the guest's own mappings inside still notify as usual. */
+void runtime_memory_gpu_map(uintptr_t address, uint64_t size) {
+    write_lock();
+    queue_hook(HOOK_MAP,address,size);
+    write_unlock();
+    flush_hooks();
+}
 /* Runs queued GPU notifications; callers invoke it after dropping the lock. */
 static void flush_hooks(void) {
     for (;;) {
