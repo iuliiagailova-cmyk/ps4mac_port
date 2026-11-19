@@ -115,7 +115,10 @@ def run_script(name, *args, capture=False, check=True):
 
 def launch_prefix(env):
     """Linux integrations chosen in the launcher: MangoHud is its Vulkan layer (an environment
-    variable), GameMode a command that starts the game."""
+    variable), GameMode a command that starts the game. SPARTAN_LAUNCH_PREFIX (a shell-quoted
+    command, e.g. a debugger) goes first on every platform."""
+    if env.get('SPARTAN_LAUNCH_PREFIX'):
+        return shlex.split(env['SPARTAN_LAUNCH_PREFIX'])
     if WINDOWS:
         return []
     if env.get('SPARTAN_MANGOHUD') == '1':

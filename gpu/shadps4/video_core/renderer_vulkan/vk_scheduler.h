@@ -616,6 +616,13 @@ public:
         return storage + offset;
     }
 
+    /// Storage for data larger than a chunk (Ratchet & Clank: image copies with thousands of
+    /// regions). It belongs to this chunk and is freed once the chunk's commands have run.
+    void* AllocateOversized(size_t bytes) {
+        oversized.push_back(std::make_unique_for_overwrite<std::byte[]>(bytes));
+        return oversized.back().get();
+    }
+
     void Execute(vk::CommandBuffer cmdbuf) {
         for (CommandBase* command = first; command;) {
             CommandBase* const next = command->next;
@@ -625,6 +632,7 @@ public:
         }
         first = last = nullptr;
         used = 0;
+        oversized.clear();
     }
 
     [[nodiscard]] bool Empty() const noexcept {
@@ -636,6 +644,7 @@ public:
     }
 
 private:
+    std::vector<std::unique_ptr<std::byte[]>> oversized;
     /// The recording thread last read these cache lines: the first write to each has to take
     /// it back from that core. Requesting ownership a few lines ahead overlaps those
     /// transfers instead of stalling on each (RecordPrefetch).
@@ -779,7 +788,11 @@ public:
         if (!IsRecordingDeferred()) {
             return;
         }
-        ASSERT(bytes + 1024 <= RecordChunk::Capacity);
+        // Data larger than a chunk goes to the chunk's oversized storage (RecordData): only the
+        // command has to fit here.
+        if (bytes + 1024 > RecordChunk::Capacity) {
+            bytes = 0;
+        }
         if (RecordChunk::Capacity - record_chunk->Size() < bytes + 1024) {
             full_chunks.push_back(std::move(record_chunk));
             record_chunk = AcquireChunk();
@@ -796,7 +809,9 @@ public:
         // Room for the data and the command that follows it, so both stay in one chunk.
         const size_t bytes = data.size_bytes();
         ReserveRecordData(bytes + alignof(T));
-        auto* dst = static_cast<T*>(record_chunk->Allocate(bytes, alignof(T)));
+        auto* dst = bytes + alignof(T) + 1024 > RecordChunk::Capacity
+                        ? static_cast<T*>(record_chunk->AllocateOversized(bytes))
+                        : static_cast<T*>(record_chunk->Allocate(bytes, alignof(T)));
         std::memcpy(dst, data.data(), bytes);
         return {dst, data.size()};
     }

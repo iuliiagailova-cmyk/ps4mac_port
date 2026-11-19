@@ -47,6 +47,10 @@ typedef struct ThreadAttr {
     struct ThreadAttr *next;
 } ThreadAttr;
 typedef struct GuestThread {
+    /* First, as in FreeBSD's struct pthread: the thread id, non-zero from creation on. Games read
+     * it through the handle right after pthread_create (Ratchet & Clank keeps it as its thread id
+     * and treats 0 as a failed creation); tcb below is only set once the new thread runs. */
+    uint64_t tid;
     /* Guest-visible TCB is allocated separately; this is the ScePthread handle. */
     uint64_t *tcb;
     unsigned char *tls_block;
@@ -132,8 +136,10 @@ static void attach(GuestThread *t) {
     current=t;
 }
 static GuestThread *new_thread(void) {
+    static _Atomic uint64_t next_tid=100000; /* FreeBSD thread ids start above PID_MAX */
     GuestThread *t=calloc(1,sizeof(*t));
     if (!t) return NULL;
+    t->tid=next_tid++;
     t->attr=(ThreadAttr){.magic=ATTR_MAGIC,.policy=1,.prio=DEFAULT_PRIO,.stack=DEFAULT_STACK,.affinity=0x7f};
     return t;
 }
@@ -252,6 +258,7 @@ static ABI int32_t attr_get_param(ThreadAttr **slot,int *param) {
 }
 static ABI int32_t attr_set_affinity(ThreadAttr **slot,uint64_t mask) {
     ThreadAttr *a=find_attr(slot);
+    if (getenv("SPARTAN_THREAD_TRACE")) printf("Thread trace: scePthreadAttrSetaffinity(%p, %#llx) -> %s\n",(void *)slot,(unsigned long long)mask,a ? "0" : "EINVAL");
     if (!a) return ERR(22);
     a->affinity=mask; return 0;
 }
@@ -389,6 +396,7 @@ static ABI int32_t thread_set_prio(GuestThread *t,int prio) {
     t->attr.prio=prio; return 0;
 }
 static ABI int32_t thread_set_affinity(GuestThread *t,uint64_t mask) {
+    if (getenv("SPARTAN_THREAD_TRACE")) printf("Thread trace: scePthreadSetaffinity(%p, %#llx) -> %s\n",(void *)t,(unsigned long long)mask,find_thread(t) ? "0" : "ESRCH");
     if (!find_thread(t)) return ERR(3);
     t->attr.affinity=mask; return 0;
 }
@@ -406,15 +414,18 @@ static ABI int32_t thread_rename(GuestThread *t,const char *name) {
 }
 static ABI int32_t thread_equal(GuestThread *a,GuestThread *b) { return a==b; }
 
+/* SPARTAN_THREAD_TRACE=1: every thread attribute and creation call with its result. */
+static int thread_trace(void) { static int v=-1; if (v<0) { const char *e=getenv("SPARTAN_THREAD_TRACE"); v=e && e[0]=='1'; } return v; }
+#define TRACED(call, fmt, ...) ({ int32_t r_=(call); if (thread_trace()) printf("Thread trace: " fmt " -> %#x\n", __VA_ARGS__, (unsigned)r_); r_; })
 /* POSIX (libScePosix) variants return positive errno values. */
 static int32_t posix(int32_t r) { return r ? (int32_t)((uint32_t)r&0xffff) : 0; }
-static ABI int32_t posix_attr_init(ThreadAttr **a) { return posix(attr_init(a)); }
+static ABI int32_t posix_attr_init(ThreadAttr **a) { return TRACED(posix(attr_init(a)),"pthread_attr_init(%p)",(void *)a); }
 static ABI int32_t posix_attr_destroy(ThreadAttr **a) { return posix(attr_destroy(a)); }
 static ABI int32_t posix_attr_set_detach(ThreadAttr **a,int s) { return posix(attr_set_detach(a,s)); }
-static ABI int32_t posix_attr_set_stack(ThreadAttr **a,uint64_t s) { return posix(attr_set_stack(a,s)); }
-static ABI int32_t posix_attr_set_param(ThreadAttr **a,const int *p) { return posix(attr_set_param(a,p)); }
+static ABI int32_t posix_attr_set_stack(ThreadAttr **a,uint64_t s) { return TRACED(posix(attr_set_stack(a,s)),"pthread_attr_setstacksize(%p, %#llx)",(void *)a,(unsigned long long)s); }
+static ABI int32_t posix_attr_set_param(ThreadAttr **a,const int *p) { return TRACED(posix(attr_set_param(a,p)),"pthread_attr_setschedparam(%p, %d)",(void *)a,p ? *p : -1); }
 static ABI int32_t posix_create(GuestThread **t,ThreadAttr **a,GuestEntry e,void *arg) { return posix(create(t,a,e,arg,"posix")); }
-static ABI int32_t posix_create_name(GuestThread **t,ThreadAttr **a,GuestEntry e,void *arg,const char *name) { return posix(create(t,a,e,arg,name)); }
+static ABI int32_t posix_create_name(GuestThread **t,ThreadAttr **a,GuestEntry e,void *arg,const char *name) { return TRACED(posix(create(t,a,e,arg,name)),"pthread_create_name_np(%s)",name ? name : "?"); }
 static ABI int32_t posix_join(GuestThread *t,void **r) { return posix(thread_join(t,r)); }
 /* Scheduling parameters (Ratchet & Clank): recorded like scePthreadSetprio, not enforced.
  * struct sched_param is { int sched_priority; }. */
@@ -429,7 +440,7 @@ static ABI int32_t thread_set_sched(GuestThread *t,int policy,const int *param) 
     t->attr.policy=policy; t->attr.prio=*param; return 0;
 }
 static ABI int32_t posix_yield(void) { return thread_yield(); }
-static ABI int32_t posix_attr_set_inherit(ThreadAttr **a,int inherit) { return posix(attr_set_inherit(a,inherit)); }
+static ABI int32_t posix_attr_set_inherit(ThreadAttr **a,int inherit) { return TRACED(posix(attr_set_inherit(a,inherit)),"pthread_attr_setinheritsched(%p, %d)",(void *)a,inherit); }
 static ABI int32_t posix_set_prio(GuestThread *t,int prio) { return posix(thread_set_prio(t,prio)); }
 static ABI int32_t posix_set_sched(GuestThread *t,int policy,const int *param) { return posix(thread_set_sched(t,policy,param)); }
 
