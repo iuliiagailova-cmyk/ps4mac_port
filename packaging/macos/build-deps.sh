@@ -59,8 +59,7 @@ if ! step vulkan; then
 fi
 # spartanport-1: performance fixes for this game under Rosetta 2 (kosmickrisp-spartanport.patch and the
 # compiler flag below); a dependency folder built before them rebuilds the driver.
-# rncport-2: Metal 4 command allocators reset on reuse (kosmickrisp-allocator-reset.patch).
-if ! step kosmickrisp || ! step kosmickrisp-spartanport-1 || ! step kosmickrisp-rncport-2; then
+if ! step kosmickrisp || ! step kosmickrisp-spartanport-1; then
     # Mesa's build runs Python with mako: meson comes from a private virtual environment.
     [[ -x $prefix/venv/bin/meson ]] || {
         python3 -m venv "$prefix/venv"
@@ -77,11 +76,6 @@ if ! step kosmickrisp || ! step kosmickrisp-spartanport-1 || ! step kosmickrisp-
     mesa=$src/mesa-kosmickrisp/externals/mesa
     if ! git -C "$mesa" apply --reverse --check "$PWD/packaging/macos/kosmickrisp-spartanport.patch" 2>/dev/null; then
         git -C "$mesa" apply "$PWD/packaging/macos/kosmickrisp-spartanport.patch"
-    fi
-    # Allocators were never reset: each kept every command it ever encoded, and after a few minutes
-    # at 30 FPS creating an encoder crashed inside Metal.
-    if ! git -C "$mesa" apply --reverse --check "$PWD/packaging/macos/kosmickrisp-allocator-reset.patch" 2>/dev/null; then
-        git -C "$mesa" apply "$PWD/packaging/macos/kosmickrisp-allocator-reset.patch"
     fi
     # Apple clang's hot/cold splitting marks hot driver functions (per-draw descriptor uploads)
     # minsize, which turns their memcpy into `rep movsb`: Rosetta 2 runs that ~12x slower.
@@ -100,7 +94,6 @@ if ! step kosmickrisp || ! step kosmickrisp-spartanport-1 || ! step kosmickrisp-
         "$src/mesa-kosmickrisp/build/outputs/kosmickrisp_mesa_icd.json" > "$prefix/share/vulkan/icd.d/kosmickrisp_mesa_icd.json"
     done_step kosmickrisp
     done_step kosmickrisp-spartanport-1
-    done_step kosmickrisp-rncport-2
 fi
 if ! step sdl3; then
     [[ -d $src/SDL3-$SDL ]] ||

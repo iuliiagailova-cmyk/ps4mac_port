@@ -65,13 +65,13 @@ The game profile (patch `Bug Fix - Address Space Base`, precise readbacks) is ap
 - **Runtime fixes:** the thread handle starts with a non-zero thread id (the game reads it right after `pthread_create`), timed waits carry a deadline of exactly one second, GPU commands may carry more than 128 KiB of data, the queue of GPU memory notifications grows as needed.
 - **Precise readbacks by default** for this game: it busy-waits until the GPU has written results to memory.
 - **GPU memory on 8 GB Macs:** large upload buffers are freed after a few seconds idle instead of after 3000 frames (never, at 1 FPS); about 1.9 GB of idle staging took the first level from ~1 FPS to 30 FPS.
-- **KosmicKrisp fix** ([`packaging/macos/kosmickrisp-allocator-reset.patch`](packaging/macos/kosmickrisp-allocator-reset.patch)): Metal 4 command allocators are reset when reused; they kept every command ever encoded and crashed Metal after a few minutes at 30 FPS.
 - **PRT apertures** are mapped for the GPU, as in shadPS4.
 - **Diagnostics:** `SPARTAN_THREAD_TRACE=1`, `SPARTAN_IMPORT_MAP=1` (with `--check-imports`), `SPARTAN_LAUNCH_PREFIX` (start under a debugger).
 
 ## Known issues
 
 - **Memory on 8 GB Macs.** GPU memory is about 3.5–4 GB in the first level and macOS swaps; gameplay runs at about 7–10 FPS. The GPU layer still keeps copies of guest memory in Vulkan buffers (~1.2 GB) and a 512 MB address table.
+- **Occasional crashes in the level** (inside Metal when the driver opens an encoder, or in `Scheduler::BeginRendering`), after one to a few minutes. Not found yet; a Metal 4 allocator reset was tried and measured, and it is not the cause.
 - **Occasional black screen at start** (a race between threads, not yet found).
 - Only the EU base game is tested.
 
