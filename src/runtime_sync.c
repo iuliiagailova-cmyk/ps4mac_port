@@ -230,14 +230,23 @@ static ABI int32_t psem_trywait(PosixSem **sem) {
 typedef struct { int64_t sec, nsec; } GuestTimespec;
 static int32_t psem_wait_until(PosixSem **sem,const GuestTimespec *abstime) {
     PosixSem *s=sem_get(sem);
-    if (!s) return sem_fail(E_INVAL);
-    if (abstime && (abstime->nsec<0 || abstime->nsec>=1000000000)) return sem_fail(E_INVAL);
+    if (!s) {
+        fprintf(stderr,"Runtime: sem_wait on an invalid semaphore %p (EINVAL)\n",(void *)sem);
+        return sem_fail(E_INVAL);
+    }
+    /* Ratchet & Clank normalizes its deadline with "while (nsec > 1e9)", which can leave nsec at
+     * exactly 1e9, and aborts on any error but ETIMEDOUT/EINTR: carry it to the next second. */
+    if (abstime && abstime->nsec<0) {
+        fprintf(stderr,"Runtime: sem_timedwait with negative nanoseconds %lld (EINVAL)\n",(long long)abstime->nsec);
+        return sem_fail(E_INVAL);
+    }
     uint64_t deadline=0;
     if (abstime) {
+        const int64_t sec=abstime->sec+abstime->nsec/1000000000, nsec=abstime->nsec%1000000000;
         /* The guest deadline is CLOCK_REALTIME; convert it to the wait clock. */
         struct timespec real;
         clock_gettime(CLOCK_REALTIME,&real);
-        const int64_t left=(abstime->sec-(int64_t)real.tv_sec)*1000000000+(abstime->nsec-real.tv_nsec);
+        const int64_t left=(sec-(int64_t)real.tv_sec)*1000000000+(nsec-real.tv_nsec);
         deadline=now_ns()+(uint64_t)(left>0 ? left : 0);
     }
     const struct timespec end=at_ns(deadline);

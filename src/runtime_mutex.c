@@ -187,8 +187,9 @@ static ABI int32_t cond_broadcast(GuestCond **cond) {
 /* PS4 struct timespec is {int64 sec, int64 nsec}, identical to Linux x86-64. */
 typedef struct { int64_t sec, nsec; } GuestTimespec;
 static ABI int32_t cond_abs_timedwait(GuestCond **cond, GuestMutex **mutex, const GuestTimespec *abs) {
-    if (!abs || abs->nsec < 0 || abs->nsec >= 1000000000) return orbis_error(EINVAL);
-    struct timespec end = {.tv_sec = (time_t)abs->sec, .tv_nsec = (long)abs->nsec};
+    /* nsec of 1e9 or more is carried (Ratchet & Clank normalizes with "> 1e9", see runtime_sync.c). */
+    if (!abs || abs->nsec < 0) return orbis_error(EINVAL);
+    struct timespec end = {.tv_sec = (time_t)(abs->sec + abs->nsec / 1000000000), .tv_nsec = (long)(abs->nsec % 1000000000)};
     return cond_wait_until(cond, mutex, &end);
 }
 /* POSIX pthread APIs return positive guest errno values, unlike scePthread. */
