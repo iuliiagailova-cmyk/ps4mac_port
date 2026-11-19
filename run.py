@@ -226,6 +226,15 @@ def main():
     if reverted:
         print('Graphics: the last restart never reached the game; previous options restored', flush=True)
     env.update(graphics_options.environment(graphics))
+    # Ratchet & Clank (CUSA01047) waits on GPU results in memory (a busy loop until the GPU has
+    # written them): it needs precise readbacks, unless its spartanport.ini says otherwise.
+    ini = graphics_options.read_ini(env['SPARTAN_CONFIG'])
+    if patches.game_title_id(env.get('SPARTAN_GAME_DIR', PORT.parent / 'CUSA01623')) == 'CUSA01047':
+        for key, name in (('deferred_readback', 'SPARTAN_DEFERRED_READBACK'),
+                          ('stale_readback', 'SPARTAN_STALE_READBACK')):
+            if key not in ini:
+                env[name] = '0'
+        print(f"Readback: deferred={env['SPARTAN_DEFERRED_READBACK']}, stale={env['SPARTAN_STALE_READBACK']} (CUSA01047 default: precise)", flush=True)
     if not env.get('SPARTAN_FSR411_DIR') and not (PORT / 'fsr4_411').is_dir() and (data / 'fsr4_411').is_dir():
         env['SPARTAN_FSR411_DIR'] = str(data / 'fsr4_411')
 
