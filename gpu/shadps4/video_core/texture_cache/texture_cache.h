@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #pragma once
+#include <unordered_map>
 
 #include <algorithm>
 #include <array>
@@ -448,6 +449,15 @@ private:
     tsl::robin_map<u64, Sampler> samplers;
     std::unordered_set<ImageId> download_images;
     u64 total_used_memory = 0;
+    /// spartanport: large image refreshes since the last report (address -> details).
+    struct LargeRefresh {
+        u64 count = 0;
+        u64 size = 0;
+        u32 width = 0, height = 0, format = 0, flags = 0;
+    };
+    std::unordered_map<u64, LargeRefresh> large_refreshes;
+    std::mutex large_refreshes_mutex;
+    void PrintRefreshDiagnostics();
     u64 gc_evictions = 0, gc_downloads = 0; ///< spartanport: pressure report
     std::chrono::steady_clock::time_point gc_report_time{};
     u64 trigger_gc_memory = 0;

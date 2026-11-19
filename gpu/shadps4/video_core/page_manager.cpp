@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <chrono>
 #include <boost/container/small_vector.hpp>
 #include "spartanport_toggles.h"
 #include "common/assert.h"
@@ -75,7 +76,16 @@ struct PageManager::Impl {
         }
         if (Common::IsWriteError(context)) {
             SpartanStats::Timer timer{SpartanStats::t_write_faults};
-            return rasterizer->OnWriteFault(addr, is_gpu_thread);
+            const auto start = std::chrono::steady_clock::now();
+            const bool handled = rasterizer->OnWriteFault(addr, is_gpu_thread);
+            const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+                                std::chrono::steady_clock::now() - start).count();
+            if (us >= 5000) {
+                const unsigned i = SpartanStats::slow_fault_next.fetch_add(1) % SpartanStats::SLOW_FAULTS;
+                SpartanStats::slow_fault_addr[i].store(addr, std::memory_order_relaxed);
+                SpartanStats::slow_fault_us[i].store(u64(us), std::memory_order_relaxed);
+            }
+            return handled;
         } else {
             SpartanStats::read_faults.fetch_add(1, std::memory_order_relaxed);
             SpartanStats::Timer timer{SpartanStats::t_read_faults};

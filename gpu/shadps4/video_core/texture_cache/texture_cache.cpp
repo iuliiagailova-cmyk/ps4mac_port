@@ -1374,6 +1374,17 @@ void TextureCache::RefreshImage(Image& image) {
     const bool is_gpu_dirty = True(image.flags & ImageFlagBits::GpuDirty);
 
     SpartanStats::image_upload_bytes.fetch_add(image.info.guest_size, std::memory_order_relaxed);
+    // spartanport: large refreshes by image, reported with the memory pressure line.
+    if (image.info.guest_size >= (4u << 20)) {
+        std::scoped_lock refresh_lock{large_refreshes_mutex};
+        auto& entry = large_refreshes[image.info.guest_address];
+        entry.count++;
+        entry.size = image.info.guest_size;
+        entry.width = image.info.size.width;
+        entry.height = image.info.size.height;
+        entry.format = static_cast<u32>(image.info.pixel_format);
+        entry.flags = static_cast<u32>(image.flags);
+    }
     boost::container::small_vector<vk::BufferImageCopy, 14> image_copies;
     for (u32 m = 0; m < num_mips; m++) {
         const u32 width = std::max(image.info.size.width >> m, 1u);
@@ -1722,6 +1733,7 @@ void TextureCache::GarbageCollectImages() {
                         vma_stats.total.statistics.allocationCount);
             gc_report_time = now;
             gc_evictions = gc_downloads = 0;
+            PrintRefreshDiagnostics();
         }
     }
 }
@@ -1843,6 +1855,25 @@ void TextureCache::DeleteImage(ImageId image_id) {
         }
         slot_images.erase(image_id);
     });
+}
+
+void TextureCache::PrintRefreshDiagnostics() {
+    std::scoped_lock refresh_lock{large_refreshes_mutex};
+    for (const auto& [address, r] : large_refreshes) {
+        std::printf("  image refresh %#llx: %llu MiB %ux%u format %u flags %#x, %llu times\n",
+                    (unsigned long long)address, (unsigned long long)(r.size >> 20), r.width,
+                    r.height, r.format, r.flags, (unsigned long long)r.count);
+    }
+    large_refreshes.clear();
+    for (unsigned i = 0; i < SpartanStats::SLOW_FAULTS; ++i) {
+        const u64 us = SpartanStats::slow_fault_us[i].exchange(0, std::memory_order_relaxed);
+        if (us) {
+            const u64 addr = SpartanStats::slow_fault_addr[i].load(std::memory_order_relaxed);
+            const ImageId id = FindImageFromRange(addr & ~u64(4095), 4096, false);
+            std::printf("  slow write fault %#llx: %.1f ms%s\n", (unsigned long long)addr, us / 1000.0,
+                        id ? " (inside an image)" : "");
+        }
+    }
 }
 
 } // namespace VideoCore

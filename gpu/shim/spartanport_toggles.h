@@ -96,6 +96,11 @@ inline std::atomic<std::uint64_t> buffer_upload_bytes{0};
 /// Device memory backing the buffer arenas (guest memory copies), and registered image bytes.
 inline std::atomic<std::uint64_t> arena_resident_bytes{0};
 inline std::atomic<std::uint64_t> image_bytes{0};
+/// Write faults that took over 5 ms (signal-safe ring; printed with the texture cache report).
+inline constexpr unsigned SLOW_FAULTS = 64;
+inline std::atomic<std::uint64_t> slow_fault_addr[SLOW_FAULTS]{};
+inline std::atomic<std::uint64_t> slow_fault_us[SLOW_FAULTS]{};
+inline std::atomic<unsigned> slow_fault_next{0};
 inline std::atomic<int> gpu_thread_clock{-1}; ///< clockid_t of the GPU command thread
 inline std::atomic<unsigned long> gpu_thread_id{0}; ///< Windows thread id of the GPU command thread
 inline std::atomic<std::uint64_t> draws{0}, dispatches{0}, submissions{0};
