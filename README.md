@@ -38,11 +38,25 @@ bash packaging/macos/build-deps.sh   # x86-64 Vulkan loader, KosmicKrisp, SDL3, 
 bash build.sh --test                 # runtime, GPU library and tests (~3 min)
 ```
 
-```bash
-SPARTAN_GAME_DIR=/path/to/CUSA01047 SPARTAN_DATA_DIR=/path/to/rncport-data python3 run.py
+Put the dump folder **`CUSA01047`** next to the `RnCPort` folder and start the game:
+
+```text
+Games/
+├── CUSA01047/      ← your dump (eboot.bin, sce_sys/, asset_archive/ …)
+└── RnCPort/        ← this repository
 ```
 
-`SPARTAN_DATA_DIR` holds the generated image, settings (`spartanport.ini`), shader cache and saves. The game profile (patch `Bug Fix - Address Space Base`, precise readbacks) is applied automatically for CUSA01047.
+```bash
+python3 run.py
+```
+
+Settings (`spartanport.ini`), saves, the shader cache and generated files go to `~/Library/Application Support/RnCPort`. Both locations can be changed:
+
+```bash
+SPARTAN_GAME_DIR=~/Games/MyDump SPARTAN_DATA_DIR=~/Games/RnCPortData python3 run.py
+```
+
+The game profile (patch `Bug Fix - Address Space Base`, precise readbacks) is applied automatically for CUSA01047.
 
 ## What RnCPort changes
 

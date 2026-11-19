@@ -183,6 +183,13 @@ def pause_menu_args(game, out, mounts):
     return [part for path in made.values() for part in ('--pause-menu', str(path))]
 
 
+# RnCPort defaults: the dump in a CUSA01047 folder next to the RnCPort folder; settings, saves and
+# generated files in ~/Library/Application Support/RnCPort on macOS (elsewhere: the RnCPort folder).
+DEFAULT_GAME_DIR = PORT.parent / 'CUSA01047'
+DEFAULT_DATA_DIR = (Path.home() / 'Library' / 'Application Support' / 'RnCPort'
+                    if platform.system() == 'Darwin' else PORT)
+
+
 def main():
     if MACOS and (error := macos_runtime_error()):
         fail(error)
@@ -196,7 +203,7 @@ def main():
     sys.path.insert(0, str(PORT / 'scripts'))
     import legacy
     legacy.forward_environment(env)
-    data = Path(env.get('SPARTAN_DATA_DIR', PORT))
+    data = Path(env.get('SPARTAN_DATA_DIR', DEFAULT_DATA_DIR))
     legacy.copy_game_settings(data)
     out = data / 'out'
     out.mkdir(parents=True, exist_ok=True)
@@ -218,7 +225,7 @@ def main():
     mod_patch_files = mods.enabled_patch_files(env.get('SPARTAN_MODS_DIR', data / 'mods'),
                                                env.get('SPARTAN_MODS_CONFIG', data / 'mods.json'),
                                                env.get('SPARTAN_MODS_ENABLED', '1') != '0',
-                                               env.get('SPARTAN_GAME_DIR', PORT.parent / 'CUSA01623'))
+                                               env.get('SPARTAN_GAME_DIR', DEFAULT_GAME_DIR))
     extra_resolutions = [s for s in patches.resolution_names(mod_patch_files) if s not in graphics_options.RESOLUTIONS]
     env['SPARTAN_EXTRA_RESOLUTIONS'] = ';'.join(extra_resolutions)
     derived.append('SPARTAN_EXTRA_RESOLUTIONS')
@@ -231,7 +238,7 @@ def main():
     # Ratchet & Clank (CUSA01047) waits on GPU results in memory (a busy loop until the GPU has
     # written them): it needs precise readbacks, unless its spartanport.ini says otherwise.
     ini = graphics_options.read_ini(env['SPARTAN_CONFIG'])
-    if patches.game_title_id(env.get('SPARTAN_GAME_DIR', PORT.parent / 'CUSA01623')) == 'CUSA01047':
+    if patches.game_title_id(env.get('SPARTAN_GAME_DIR', DEFAULT_GAME_DIR)) == 'CUSA01047':
         for key, name in (('deferred_readback', 'SPARTAN_DEFERRED_READBACK'),
                           ('stale_readback', 'SPARTAN_STALE_READBACK')):
             if key not in ini:
@@ -266,7 +273,7 @@ def main():
         sys.exit(20)
     missing = parse_cpu_features(features.stdout)
 
-    game = Path(env.get('SPARTAN_GAME_DIR', PORT.parent / 'CUSA01623'))
+    game = Path(env.get('SPARTAN_GAME_DIR', DEFAULT_GAME_DIR))
     if not (game / 'eboot.bin').is_file():
         fail(f'No eboot.bin in {game} (set SPARTAN_GAME_DIR).')
     update_view = None
