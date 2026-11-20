@@ -39,6 +39,8 @@ int ps4mac_gfx_server_handle(const Ps4macMessage *m);
 int ps4mac_gfx_server_check_port(uint32_t size, uint32_t labels, uint32_t groups, uint32_t slots);
 int ps4mac_gfx_server_hdr_supported(void);
 int ps4mac_gfx_server_fault(uintptr_t address, int is_write);
+uint64_t ps4mac_gfx_server_fault_drain_ns(void);
+uint64_t ps4mac_gfx_server_gpu_modified_faults(void);
 
 /* From any thread: replies (ring thread), interrupts (graphics thread), presents (present thread). */
 static void push_to_guest(const Ps4macMessage *m) {
@@ -58,7 +60,12 @@ static void protect_guest(uintptr_t address, uint64_t size, int read, int write)
                              .c = (uint64_t)(read ? 1 : 0) | (uint64_t)(write ? 2 : 0)};
     const int pushed = !ps4mac_ring_push(&block->to_guest, &m, 2000000000ull);
     pthread_mutex_unlock(&to_guest_lock);
-    if (pushed) ps4mac_counter_wait(&block->protect_done, sequence, 200000);
+    if (pushed) {
+        const uint64_t start = ps4mac_now_ns();
+        ps4mac_counter_wait(&block->protect_done, sequence, 200000);
+        atomic_fetch_add_explicit(&block->stat_protects, 1, memory_order_relaxed);
+        atomic_fetch_add_explicit(&block->stat_protect_wait_ns, ps4mac_now_ns() - start, memory_order_relaxed);
+    }
 }
 
 static void fail(const char *what) {
@@ -144,8 +151,18 @@ static void handle(const Ps4macMessage *m) {
     }
     case PS4MAC_WRITE_FAULT:
     case PS4MAC_READ_FAULT: {
+        const uint64_t start = ps4mac_now_ns();
         const int handled = atomic_load(&gfx_ready) &&
                             ps4mac_gfx_server_fault((uintptr_t)m->a, m->kind == PS4MAC_WRITE_FAULT);
+        atomic_fetch_add_explicit(&block->stat_faults, 1, memory_order_relaxed);
+        atomic_fetch_add_explicit(&block->stat_fault_handle_ns, ps4mac_now_ns() - start, memory_order_relaxed);
+        atomic_store_explicit(&block->stat_fault_drain_ns, ps4mac_gfx_server_fault_drain_ns(), memory_order_relaxed);
+        {
+            static uint64_t last_print;
+            const uint64_t n = ps4mac_gfx_server_gpu_modified_faults();
+            if (n / 500 != last_print / 500) fprintf(stderr, "ps4mac_service: %llu faults so far on GPU-written pages\n", (unsigned long long)n);
+            last_print = n;
+        }
         block->fault_result[m->sequence % 256] = (uint8_t)handled;
         ps4mac_counter_set(&block->fault_done, (uint32_t)m->sequence);
         ++faults;

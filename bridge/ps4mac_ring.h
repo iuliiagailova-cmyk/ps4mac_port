@@ -59,6 +59,11 @@ typedef struct {
     _Alignas(64) _Atomic uint32_t fault_done;
     uint8_t fault_result[256];
     _Alignas(64) _Atomic uint32_t protect_done; /* the last PS4MAC_PROTECT the guest applied */
+    /* Step 3.6: the bridge's cost (the guest prints it every 5 s with SPARTAN_FRAME_STATS). */
+    _Alignas(64) _Atomic uint64_t stat_protects, stat_protect_wait_ns; /* service: waits for the guest */
+    _Atomic uint64_t stat_faults, stat_fault_handle_ns;              /* service: handling a fault */
+    _Atomic uint64_t stat_fault_wait_ns;                              /* guest: a fault's round trip */
+    _Atomic uint64_t stat_fault_drain_ns;                             /* service: of it, the draw pipe drain */
     Ps4macSharedRing to_graphics;
     Ps4macSharedRing to_guest;
 } Ps4macSharedBlock;

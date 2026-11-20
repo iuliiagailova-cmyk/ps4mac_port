@@ -245,13 +245,33 @@ extern "C" int ps4mac_gfx_server_hdr_supported(void) {
     return presenter->IsHDRSupported() ? 1 : 0;
 }
 
+std::atomic<u64> fault_drain_ns{0}, gpu_modified_faults{0};
+extern "C" uint64_t ps4mac_gfx_server_gpu_modified_faults(void) {
+    return gpu_modified_faults.load(std::memory_order_relaxed);
+}
+extern "C" uint64_t ps4mac_gfx_server_fault_drain_ns(void) {
+    return fault_drain_ns.load(std::memory_order_relaxed);
+}
+
 /// Step 3.4: a guest access to a page the GPU protects (PS4MAC_WRITE_FAULT/READ_FAULT), handled as
 /// page_manager.cpp's fault handler does in one process. Returns whether it was such a page.
 extern "C" int ps4mac_gfx_server_fault(uintptr_t address, int is_write) {
     auto& rasterizer = presenter->GetRasterizer();
     if (is_write) {
         SpartanStats::Timer timer{SpartanStats::t_write_faults};
-        return rasterizer.OnWriteFault(VAddr(address), false) ? 1 : 0;
+        // Step 3.6: faults on pages the GPU wrote (they download first, on the graphics thread),
+        // timed apart from the others.
+        rasterizer.DrainDrawPipe();
+        const bool gpu_modified = rasterizer.IsRegionGpuModified(VAddr(address), 8);
+        const auto start = std::chrono::steady_clock::now();
+        const int handled = rasterizer.OnWriteFault(VAddr(address), false) ? 1 : 0;
+        if (gpu_modified) {
+            fault_drain_ns.fetch_add(u64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                             std::chrono::steady_clock::now() - start).count()),
+                                     std::memory_order_relaxed);
+            gpu_modified_faults.fetch_add(1, std::memory_order_relaxed);
+        }
+        return handled;
     }
     SpartanStats::read_faults.fetch_add(1, std::memory_order_relaxed);
     SpartanStats::Timer timer{SpartanStats::t_read_faults};

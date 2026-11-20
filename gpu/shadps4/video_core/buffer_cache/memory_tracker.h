@@ -82,9 +82,21 @@ public:
                     // modified. If we need to flush the flush function is going to perform CPU
                     // state change.
                     std::scoped_lock lk{manager->lock};
+                    // ps4mac_port (step 3.6): SPARTAN_WRITE_NO_DOWNLOAD=1: a CPU write to a page the
+                    // GPU wrote does not download the GPU's data first (it waited ~15 ms behind the
+                    // graphics queue, ~40 times a second in R&C); the page is the CPU's from now on.
+                    static const bool no_download = [] {
+                        const char* env = std::getenv("SPARTAN_WRITE_NO_DOWNLOAD");
+                        return env && env[0] == '1';
+                    }();
                     if (EmulatorSettings.GetReadbacksMode() != GpuReadbacksMode::Disabled &&
                         manager->template IsRegionModified<Type::GPU>(offset, size)) {
-                        return true;
+                        if (!no_download) {
+                            return true;
+                        }
+                        // Not the GPU's any more: a later readback must not bring its data back.
+                        manager->template ChangeRegionState<Type::GPU, false>(
+                            manager->GetCpuAddr() + offset, size);
                     }
                     manager->template ChangeRegionState<Type::CPU, true>(
                         manager->GetCpuAddr() + offset, size);

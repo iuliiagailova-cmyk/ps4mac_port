@@ -135,7 +135,9 @@ int runtime_bridge_fault(uintptr_t address, int is_write) {
     const int pushed = !ps4mac_ring_push(&block->to_graphics, &m, 2000000000ull);
     pthread_mutex_unlock(&push_lock);
     if (!pushed) return 0;
+    const uint64_t start = ps4mac_now_ns();
     ps4mac_counter_wait(&block->fault_done, sequence, 200000);
+    atomic_fetch_add_explicit(&block->stat_fault_wait_ns, ps4mac_now_ns() - start, memory_order_relaxed);
     return block->fault_result[sequence % 256];
 }
 
@@ -143,7 +145,24 @@ static void *reply_thread(void *unused) {
     (void)unused;
     unsigned ok = 0, bad = 0;
     uint64_t last_report = ps4mac_now_ns();
+    const int stats = getenv("SPARTAN_FRAME_STATS") != NULL;
+    uint64_t last_stats = ps4mac_now_ns(), last[6] = {0};
     for (;;) {
+        if (stats && remote_graphics && ps4mac_now_ns() - last_stats >= 5000000000ull) {
+            const uint64_t now[6] = {atomic_load(&block->stat_protects), atomic_load(&block->stat_protect_wait_ns),
+                                     atomic_load(&block->stat_faults), atomic_load(&block->stat_fault_handle_ns),
+                                     atomic_load(&block->stat_fault_wait_ns), atomic_load(&block->stat_fault_drain_ns)};
+            const double s = (ps4mac_now_ns() - last_stats) / 1e9;
+            const double protects = (double)(now[0] - last[0]), faults = (double)(now[2] - last[2]);
+            printf("Bridge cost: %.0f protects/s (service waits %.1f ms/s, %.1f us each); %.0f faults/s "
+                   "(service handles %.1f ms/s, of it faults on GPU-written pages %.1f ms/s; guest waits %.1f ms/s, %.1f us each)\n",
+                   protects / s, (now[1] - last[1]) / 1e6 / s, protects ? (now[1] - last[1]) / 1e3 / protects : 0.0,
+                   faults / s, (now[3] - last[3]) / 1e6 / s, (now[5] - last[5]) / 1e6 / s, (now[4] - last[4]) / 1e6 / s,
+                   faults ? (now[4] - last[4]) / 1e3 / faults : 0.0);
+            fflush(stdout);
+            memcpy(last, now, sizeof(last));
+            last_stats = ps4mac_now_ns();
+        }
         Ps4macMessage m;
         if (!ps4mac_ring_pop(&block->to_guest, &m, 50000, 1000000000ull)) {
             if (!atomic_load(&block->service_alive)) return NULL;
