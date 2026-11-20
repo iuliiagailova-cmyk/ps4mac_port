@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "spartanport_trace.h"
 #include <filesystem>
 #include <xxhash.h>
 #include "video_core/amdgpu/liverpool.h"
@@ -225,6 +226,7 @@ void TextureCache::ReportImageCreates() {
 // spartanport: every copy is recorded first and the GPU is waited for once. A wait per image (as
 // before) left the GPU mostly idle in the game's gameplay, at about 2 FPS.
 void TextureCache::ProcessDownloadImages() {
+    SpartanTrace::Scope trace_scope{"image downloads"};
     if (Vulkan::WaitDiagnostics::Enabled()) {
         ReportImageCreates();
     }
@@ -269,6 +271,20 @@ void TextureCache::ProcessDownloadImages() {
                     pending_readbacks.Push(copy->guest_address, copy->size,
                         scheduler.CurrentTick(), copy->staging);
                     has_pending_readbacks.store(true, std::memory_order_release);
+                    // RnCPort: publish the copy as soon as the GPU is past it. Stale reads
+                    // otherwise saw new data only at the next access through the GPU layer: a
+                    // guest spinning on the memory (Ratchet & Clank's loading) never got it.
+                    static const bool retire_on_completion = [] {
+                        const char* env = std::getenv("SPARTAN_READBACK_RETIRE");
+                        return !(env && env[0] == '0');
+                    }();
+                    if (retire_on_completion && !retire_queued.exchange(true)) {
+                        scheduler.DeferPriorityOperation([this] {
+                            retire_queued.store(false);
+                            std::scoped_lock lock{readback_mutex};
+                            RetireReadbacks();
+                        });
+                    }
                     ++readbacks_queued;
                     readbacks_peak_bytes = std::max(readbacks_peak_bytes, pending_readbacks.Bytes());
                 }
