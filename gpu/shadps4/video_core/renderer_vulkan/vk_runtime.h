@@ -98,6 +98,13 @@ public:
                           bool check_read_access = false);
 
     void FlushBarriers();
+    /// ps4mac_port: the guest asked for its writes to be visible (EventWrite flushes, AcquireMem):
+    /// a deferred memory barrier is recorded now, even inside a render pass.
+    void GuestSync();
+    /// SPARTAN_GUEST_SYNC_BARRIERS=1: inside a render pass, a memory-only barrier (buffer hazards
+    /// between draws) waits for the pass to end or for the guest's own sync, as on the PS4 GPU,
+    /// instead of breaking the pass (a store and a load of every attachment on a tiled GPU).
+    static bool GuestSyncBarriers();
 
     /// spartanport: runs before this thread changes image state (layouts, pending image
     /// barriers): the rasterizer joins its texture binding helper there (BindHelper).
@@ -132,6 +139,7 @@ private:
     };
     std::array<AccessMemo, 512> access_memo{};
     u32 access_epoch = 1;
+    bool force_flush = false; // GuestSync
 };
 
 } // namespace Vulkan

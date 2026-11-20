@@ -33,6 +33,7 @@
 #include "video_core/amdgpu/pm4_cmds.h"
 #include "video_core/renderdoc.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
+#include "video_core/renderer_vulkan/vk_runtime.h"
 
 namespace AmdGpu {
 
@@ -416,6 +417,37 @@ void RunDmaData(Vulkan::Rasterizer& rasterizer, const u8* data) {
     } else {
         UNREACHABLE_MSG("WriteData src_sel = {}, dst_sel = {}", u32(dma_data->src_sel),
                         u32(dma_data->dst_sel));
+    }
+}
+
+// ps4mac_port: the guest's sync points for Runtime::GuestSyncBarriers: events that make shader
+// writes visible (partial flushes, cache flushes), and AcquireMem.
+bool IsGuestSyncEvent(EventType type) {
+    switch (type) {
+    case EventType::CacheFlushTs:
+    case EventType::CacheFlush:
+    case EventType::CsPartialFlush:
+    case EventType::VsPartialFlush:
+    case EventType::PsPartialFlush:
+    case EventType::CacheFlushAndInvTsEvent:
+    case EventType::CacheFlushAndInvEvent:
+    case EventType::BottomOfPipeTs:
+    case EventType::DbCacheFlushAndInv:
+    case EventType::FlushAndInvDbDataTs:
+    case EventType::FlushAndInvDbMeta:
+    case EventType::FlushAndInvCbDataTs:
+    case EventType::FlushAndInvCbMeta:
+    case EventType::CsDone:
+    case EventType::PsDone:
+        return true;
+    default:
+        return false;
+    }
+}
+
+void GuestSyncTask(Vulkan::Rasterizer& rasterizer, const u8*) {
+    if (Vulkan::Runtime::GuestSyncBarriers()) {
+        rasterizer.GuestSync();
     }
 }
 
@@ -1222,6 +1254,11 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 LOG_DEBUG(Render, "Encountered EventWrite: event_type = {}, event_index = {}",
                           magic_enum::enum_name(event->event_type.Value()),
                           magic_enum::enum_name(event->event_index.Value()));
+                if (rasterizer && Vulkan::Runtime::GuestSyncBarriers() &&
+                    IsGuestSyncEvent(event->event_type.Value())) {
+                    rasterizer->RunInOrder(&GuestSyncTask, header, sizeof(u32),
+                                           SpartanToggle::PipelinedMemoryWrites);
+                }
                 if (event->event_type.Value() == EventType::SoVgtStreamoutFlush) {
                     // registers: ApplyGraphicsRegisterPacket
                 } else if (event->event_index.Value() == EventIndex::ZpassDone) {
@@ -1319,6 +1356,10 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
             }
             case PM4ItOpcode::AcquireMem: {
                 // const auto* acquire_mem = reinterpret_cast<PM4CmdAcquireMem*>(header);
+                if (rasterizer && Vulkan::Runtime::GuestSyncBarriers()) {
+                    rasterizer->RunInOrder(&GuestSyncTask, header, sizeof(u32),
+                                           SpartanToggle::PipelinedMemoryWrites);
+                }
                 break;
             }
             case PM4ItOpcode::Rewind: {

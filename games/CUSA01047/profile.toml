@@ -20,6 +20,10 @@ SPARTAN_STALE_READBACK = "1"
 # Submit every 100 draws/dispatches: the GPU starts while the frame is still recorded
 # (first level on an M1: 5.8 -> 7.9 FPS; 30 and 300 were slower).
 SPARTAN_FLUSH_DRAWS = "100"
+# Buffer hazards between draws inside a render pass follow the game's own sync (cache flush events,
+# AcquireMem) instead of breaking the pass: ~25 fewer render passes a frame on the tiled M1 GPU
+# (level 10.7 -> 13.7 FPS, fight 9.4 -> 11.6; service mode 10.8 -> 13.4, 10.3 -> 12.7).
+SPARTAN_GUEST_SYNC_BARRIERS = "1"
 
 [known_issues]
 fire_green_bars = "Rare green vertical bars over fire for half a second (seen once with stale readbacks)"

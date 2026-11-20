@@ -2,6 +2,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <boost/container/small_vector.hpp>
+#include <algorithm>
+#include <chrono>
+#include <map>
+#include <mutex>
+#include <span>
+#include <string>
+#include <vector>
 #include "spartanport_toggles.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
@@ -101,6 +108,12 @@ static u32 BufferImageCopySize(const vk::BufferImageCopy& copy, const vk::Format
 Runtime::Runtime(const Instance& instance_, Scheduler& scheduler_)
     : instance{instance_}, scheduler{scheduler_}, staging_pool{instance_, scheduler_} {
     blit_helper = std::make_unique<VideoCore::BlitHelper>(instance, scheduler);
+    if (GuestSyncBarriers()) {
+        // Barriers deferred inside a pass (and layout transitions queued for the next one) are
+        // recorded between passes.
+        scheduler.SetPassBoundaryHook([this] { FlushBarriers(); });
+        std::printf("GPU: memory barriers inside render passes follow the guest's sync\n");
+    }
 
     memory_barrier.dstStageMask = vk::PipelineStageFlagBits2::eAllCommands;
     memory_barrier.dstAccessMask =
@@ -857,6 +870,60 @@ void Runtime::AccessBuffer(const VideoCore::Buffer* handle, u64 offset, u64 size
     memory_barrier.srcAccessMask |= src_access & WRITE_MASK;
 }
 
+namespace {
+// ps4mac_port: SPARTAN_PASS_BREAKS=1: the barriers that end a render pass, by kind (every 5 s).
+void CountPassBarrier(const vk::MemoryBarrier2& memory, bool has_memory,
+                      std::span<const vk::ImageMemoryBarrier2> images) {
+    static const bool enabled = [] {
+        const char* env = std::getenv("SPARTAN_PASS_BREAKS");
+        return env && env[0] == '1';
+    }();
+    if (!enabled) return;
+    static std::mutex mutex;
+    static std::map<std::string, u64> kinds;
+    static auto window = std::chrono::steady_clock::now();
+    std::string key;
+    if (has_memory) {
+        key += "memory " + vk::to_string(memory.srcStageMask) + " -> " + vk::to_string(memory.dstStageMask) +
+               " (" + vk::to_string(memory.srcAccessMask) + " -> " + vk::to_string(memory.dstAccessMask) + ")";
+    }
+    for (const auto& image : images) {
+        key += (key.empty() ? "" : "; ") + std::string("image ") + vk::to_string(image.oldLayout) + " -> " +
+               vk::to_string(image.newLayout);
+        if (key.size() > 400) break;
+    }
+    std::scoped_lock lock{mutex};
+    ++kinds[key];
+    const auto now = std::chrono::steady_clock::now();
+    if (now - window >= std::chrono::seconds(5)) {
+        const double seconds = std::chrono::duration<double>(now - window).count();
+        window = now;
+        std::vector<std::pair<u64, std::string>> rows;
+        for (auto& [k, n] : kinds) rows.emplace_back(n, k);
+        std::sort(rows.rbegin(), rows.rend());
+        std::printf("Pass-ending barriers (per second):\n");
+        for (size_t i = 0; i < rows.size() && i < 10; ++i) {
+            std::printf("  %7.1f  %s\n", rows[i].first / seconds, rows[i].second.c_str());
+        }
+        kinds.clear();
+    }
+}
+} // namespace
+
+bool Runtime::GuestSyncBarriers() {
+    static const bool enabled = [] {
+        const char* env = std::getenv("SPARTAN_GUEST_SYNC_BARRIERS");
+        return env && env[0] == '1';
+    }();
+    return enabled;
+}
+
+void Runtime::GuestSync() {
+    force_flush = true;
+    FlushBarriers();
+    force_flush = false;
+}
+
 void Runtime::FlushBarriers() {
     BeforeImageAccess();
     vk::DependencyInfo dep_info{};
@@ -874,6 +941,15 @@ void Runtime::FlushBarriers() {
         return;
     }
 
+    // ps4mac_port: see GuestSyncBarriers (vk_runtime.h). The barrier stays pending; the scheduler
+    // records it between this pass and the next (its pass boundary hook), GuestSync earlier.
+    if (GuestSyncBarriers() && !force_flush && scheduler.IsRendering() && image_barriers.empty()) {
+        return;
+    }
+    if (scheduler.IsRendering()) {
+        CountPassBarrier(memory_barrier, dep_info.memoryBarrierCount != 0,
+                         std::span<const vk::ImageMemoryBarrier2>(image_barriers.data(), image_barriers.size()));
+    }
     scheduler.EndRendering();
     scheduler.Record([memory = memory_barrier, has_memory = dep_info.memoryBarrierCount != 0,
                       images = scheduler.RecordData(std::span<const vk::ImageMemoryBarrier2>(

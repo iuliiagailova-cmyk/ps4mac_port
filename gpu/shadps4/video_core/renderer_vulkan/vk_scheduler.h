@@ -710,6 +710,11 @@ public:
 
     /// Ends current rendering scope.
     void EndRendering();
+    /// ps4mac_port: runs between the end of a render pass and the start of the next one (not
+    /// rendering), for barriers deferred during the pass (Runtime::GuestSyncBarriers).
+    void SetPassBoundaryHook(std::function<void()> hook) {
+        pass_boundary_hook = std::move(hook);
+    }
 
     /// spartanport: a render pass that only clears depth/stencil (load op) is begun by the next
     /// BeginRendering on the same depth view and render area, as its load op, instead of
@@ -852,6 +857,10 @@ public:
     void WaitDeferredSignals();
 
     /// Whether a render pass with exactly this state is open.
+    [[nodiscard]] bool IsRendering() const {
+        return is_rendering;
+    }
+
     [[nodiscard]] bool IsRenderingWith(const RenderState& state) const {
         return is_rendering && render_state == state;
     }
@@ -936,6 +945,7 @@ private:
     std::jthread priority_pending_ops_thread;
     RenderState render_state;
     bool is_rendering = false;
+    std::function<void()> pass_boundary_hook;
     std::optional<RenderState> pending_clear;
     // spartanport: threaded recording
     std::unique_ptr<RecordChunk> record_chunk;

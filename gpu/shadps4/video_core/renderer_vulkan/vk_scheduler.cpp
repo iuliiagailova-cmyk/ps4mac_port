@@ -1,6 +1,14 @@
 // SPDX-FileCopyrightText: Copyright 2025 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cxxabi.h>
+#include <dlfcn.h>
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <cstdio>
+#include <string>
+#include <vector>
 #include "common/cpu_relax.h"
 #include "spartanport_trace.h"
 #include <thread>
@@ -89,6 +97,78 @@ void Scheduler::DeferDepthClear(const RenderState& state) {
     pending_clear = state;
 }
 
+
+namespace {
+// ps4mac_port: SPARTAN_PASS_BREAKS=1 counts render pass ends by their callers (three frames) and
+// how many passes start again on the same attachments right after (breaks a tiled GPU pays a
+// store and a load of every attachment for). Printed every 5 s.
+struct PassBreaks {
+    struct Site {
+        std::array<void*, 3> frames{};
+        u64 ends = 0, resumed = 0;
+    };
+    std::mutex mutex;
+    std::vector<Site> sites;
+    std::array<void*, 3> last_frames{};
+    bool have_last = false;
+    RenderState last_state{};
+    std::chrono::steady_clock::time_point window = std::chrono::steady_clock::now();
+
+    static bool Enabled() {
+        static const bool enabled = [] {
+            const char* env = std::getenv("SPARTAN_PASS_BREAKS");
+            return env && env[0] == '1';
+        }();
+        return enabled;
+    }
+    static PassBreaks& Get() {
+        static PassBreaks breaks;
+        return breaks;
+    }
+    Site& Find(const std::array<void*, 3>& frames) {
+        for (auto& site : sites) {
+            if (site.frames == frames) return site;
+        }
+        return sites.emplace_back(Site{frames});
+    }
+    static std::string Name(void* pc) {
+        Dl_info info{};
+        if (!pc || !dladdr(pc, &info) || !info.dli_sname) return "?";
+        int status = 0;
+        char* demangled = abi::__cxa_demangle(info.dli_sname, nullptr, nullptr, &status);
+        std::string name = status == 0 && demangled ? demangled : info.dli_sname;
+        std::free(demangled);
+        if (const auto paren = name.find('('); paren != std::string::npos) name.resize(paren);
+        return name;
+    }
+    void Ended(const RenderState& state, const std::array<void*, 3>& frames) {
+        std::scoped_lock lock{mutex};
+        ++Find(frames).ends;
+        last_state = state;
+        last_frames = frames;
+        have_last = true;
+    }
+    void Began(const RenderState& state) {
+        std::scoped_lock lock{mutex};
+        if (have_last && state == last_state) ++Find(last_frames).resumed;
+        have_last = false;
+        const auto now = std::chrono::steady_clock::now();
+        if (now - window < std::chrono::seconds(5)) return;
+        const double seconds = std::chrono::duration<double>(now - window).count();
+        window = now;
+        std::sort(sites.begin(), sites.end(), [](const Site& a, const Site& b) { return a.ends > b.ends; });
+        std::printf("Pass breaks (per second): ends by caller, of which the same targets resumed\n");
+        for (size_t i = 0; i < sites.size() && i < 12; ++i) {
+            const auto& site = sites[i];
+            std::printf("  %7.1f ends, %7.1f resumed  %s <- %s <- %s\n", site.ends / seconds,
+                        site.resumed / seconds, Name(site.frames[0]).c_str(),
+                        Name(site.frames[1]).c_str(), Name(site.frames[2]).c_str());
+        }
+        sites.clear();
+    }
+};
+} // namespace
+
 void Scheduler::BeginRendering(const RenderState& new_state) {
     if (is_rendering && render_state == new_state) {
         return;
@@ -107,6 +187,12 @@ void Scheduler::BeginRendering(const RenderState& new_state) {
         }
     }
     EndRendering(); // also runs a deferred clear this pass does not take over
+    if (pass_boundary_hook) {
+        pass_boundary_hook();
+    }
+    if (PassBreaks::Enabled()) {
+        PassBreaks::Get().Began(new_state);
+    }
     is_rendering = true;
     render_state = new_state;
     SpartanStats::render_passes.fetch_add(1, std::memory_order_relaxed);
@@ -190,7 +276,7 @@ void Scheduler::BeginRendering(const RenderState& new_state) {
     });
 }
 
-void Scheduler::EndRendering() {
+[[gnu::noinline]] void Scheduler::EndRendering() {
     if (!is_rendering && pending_clear) {
         // A deferred clear nobody took over: run it before what follows.
         auto clear = *pending_clear;
@@ -199,6 +285,10 @@ void Scheduler::EndRendering() {
     }
     if (!is_rendering) {
         return;
+    }
+    if (PassBreaks::Enabled()) {
+        PassBreaks::Get().Ended(render_state, {__builtin_return_address(0), __builtin_return_address(1),
+                                               __builtin_return_address(2)});
     }
     is_rendering = false;
     Record([](vk::CommandBuffer cmdbuf) {

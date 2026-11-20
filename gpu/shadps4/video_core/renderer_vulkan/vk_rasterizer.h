@@ -134,6 +134,8 @@ public:
     bool IsGpuSideThreadId(u32 tid) const;
     /// A guest write hit a protected page.
     bool OnWriteFault(VAddr addr, bool assume_locks);
+    /// ps4mac_port: the guest's sync point (cache flush event, AcquireMem), in stream order.
+    void GuestSync();
     /// ps4mac_port (step 3.6 measurement): whether the GPU wrote this range since the CPU did.
     bool IsRegionGpuModified(VAddr addr, u64 size) {
         return buffer_cache.IsRegionGpuModified(addr, size);

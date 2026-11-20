@@ -3350,6 +3350,10 @@ bool Rasterizer::InvalidateMemory(VAddr addr, u64 size, bool assume_locks) {
     return true;
 }
 
+void Rasterizer::GuestSync() {
+    runtime.GuestSync();
+}
+
 bool Rasterizer::OnWriteFault(VAddr addr, bool assume_locks) {
     DrainDrawPipe();
     if (!InvalidateMemory(addr, 8, assume_locks)) {
