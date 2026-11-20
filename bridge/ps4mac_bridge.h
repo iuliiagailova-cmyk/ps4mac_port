@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define PS4MAC_BRIDGE_VERSION 1u
+#define PS4MAC_BRIDGE_VERSION 2u
 
 /* Guest -> graphics, in order (submissions and memory changes share one ring: a submission
  * must see the mappings made before it). */
@@ -28,11 +28,13 @@ enum Ps4macToGraphics {
     PS4MAC_MAP_COMPUTE_QUEUE,    /* ring base, read pointer address, size, pipe -> vqid */
     PS4MAC_UNMAP_COMPUTE_QUEUE,
     PS4MAC_FLIP,                 /* VideoOut: show a registered buffer */
-    PS4MAC_MEMORY_MAP,           /* guest mapping appeared (GPU may access it) */
-    PS4MAC_MEMORY_UNMAP,
+    PS4MAC_MEMORY_MAP,           /* guest mapping appeared: a address, b size, c pool offset, d host prot */
+    PS4MAC_MEMORY_UNMAP,         /* a address, b size */
     PS4MAC_MEMORY_INVALIDATE,    /* guest wrote memory without a fault (e.g. file reads) */
     PS4MAC_WRITE_FAULT,          /* guest wrote a protected page: graphics answers PS4MAC_FAULT_DONE */
     PS4MAC_READ_FAULT,
+    PS4MAC_MEMORY_PROTECT,       /* the guest changed protection: a address, b size, d host prot */
+    PS4MAC_GPU_INIT,             /* the video core may start: configuration in the shared block */
 };
 
 /* Graphics -> guest. */

@@ -30,6 +30,13 @@ typedef struct {
     Ps4macMessage slots[PS4MAC_RING_SLOTS];
 } Ps4macSharedRing;
 
+/* The video core's start-up settings (SpartanGpuConfig), written before PS4MAC_GPU_INIT. */
+typedef struct {
+    char title[256], serial[32], user_dir[1024];
+    uint32_t sdk_version, psf_attributes;
+    int32_t width, height;
+} Ps4macGpuConfig;
+
 /* Set up by the guest side before the service starts; sizes and bases tell the service how to
  * map guest memory at the same addresses. */
 typedef struct {
@@ -40,6 +47,8 @@ typedef struct {
     uint64_t low_size;
     uint64_t user_min, user_max; /* the PS4 user range both sides reserve */
     _Atomic uint32_t guest_alive, service_alive;
+    uint64_t clock_start_ns; /* the guest's process clock origin (CLOCK_MONOTONIC, ns) */
+    Ps4macGpuConfig gpu_config;
     Ps4macSharedRing to_graphics;
     Ps4macSharedRing to_guest;
 } Ps4macSharedBlock;

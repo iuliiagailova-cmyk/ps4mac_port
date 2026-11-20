@@ -448,7 +448,7 @@ static int32_t place(void **inout, uint64_t size, int prot, int flags, uint64_t 
     }
     if (host_map(address,size,host_prot(prot),kind==KIND_RESERVED,phys)) return NO_MEMORY;
 #ifdef __APPLE__
-    if (mapping_observer) mapping_observer(address,size,kind==KIND_RESERVED ? 2 : 0,phys);
+    if (mapping_observer) mapping_observer(address,size,kind==KIND_RESERVED ? 2 : 0,phys,host_prot(prot));
 #endif
     void *mapped=(void *)address;
     drop_range(address,address+size);
@@ -537,7 +537,7 @@ static int32_t unmap_locked(uintptr_t start, uint64_t size) {
         uintptr_t a=vmas[i].start>start ? vmas[i].start : start, b=vmas[i].end<end ? vmas[i].end : end;
         if (host_unmap(a,b-a)) return INVALID;
 #ifdef __APPLE__
-        if (mapping_observer && vmas[i].kind!=KIND_RESERVED) mapping_observer(a,b-a,2,0);
+        if (mapping_observer && vmas[i].kind!=KIND_RESERVED) mapping_observer(a,b-a,2,0,0);
 #endif
     }
     drop_range(start,end);
@@ -639,6 +639,7 @@ static int32_t protect_locked(uintptr_t start, uint64_t size, int prot, int type
     int error; size_t i=carve(start,end,&error);
     if (error) return NO_MEMORY;
     for (; i<vma_count && vmas[i].start<end; ++i) { vmas[i].prot=prot; if (type>=0) vmas[i].type=type; }
+    if (mapping_observer) mapping_observer(start,end-start,3,0,host_prot(prot));
     queue_hook(HOOK_INVALIDATE,start,end-start);
     ++protects;
     return 0;
@@ -961,7 +962,7 @@ void runtime_memory_set_mapping_observer(RuntimeMappingObserver observer) {
     mapping_observer=observer;
     if (observer)
         for (size_t i=0;i<vma_count;++i)
-            if (vmas[i].kind!=KIND_RESERVED) observer(vmas[i].start,vmas[i].end-vmas[i].start,0,vmas[i].phys);
+            if (vmas[i].kind!=KIND_RESERVED) observer(vmas[i].start,vmas[i].end-vmas[i].start,0,vmas[i].phys,host_prot(vmas[i].prot));
     write_unlock();
 }
 #endif

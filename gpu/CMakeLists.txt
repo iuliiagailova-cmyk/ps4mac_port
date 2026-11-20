@@ -148,9 +148,19 @@ if (CMAKE_OSX_ARCHITECTURES STREQUAL "arm64" OR (NOT CMAKE_OSX_ARCHITECTURES AND
     set(PS4MAC_ARM64 ON)
     list(REMOVE_ITEM COMMON shadps4/common/decoder.cpp)
 endif()
-file(GLOB AVPLAYER CONFIGURE_DEPENDS shadps4/core/libraries/avplayer/*.cpp)
-pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil libswscale libswresample)
 file(GLOB SHIM_SOURCES CONFIGURE_DEPENDS shim/*.cpp shim/*/*.cpp)
+# ps4mac_port: the arm64 build (the graphics service) has no FFmpeg. AvPlayer and the video
+# decoder stay on the guest side; PNG decoding uses ImageIO there.
+if (PS4MAC_ARM64)
+    set(AVPLAYER "")
+    set(VIDEO_UTILS "")
+    list(REMOVE_ITEM SHIM_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/shim/spartanport_png.cpp)
+else()
+    file(GLOB AVPLAYER CONFIGURE_DEPENDS shadps4/core/libraries/avplayer/*.cpp)
+    set(VIDEO_UTILS shadps4/core/libraries/videodec/video_utils.cpp)
+    pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil libswscale libswresample)
+    list(REMOVE_ITEM SHIM_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/shim/spartanport_png_imageio.cpp)
+endif()
 # Windows: a DLL cannot leave the runtime_* symbols for spartanport-probe.exe to resolve, so the
 # library is static there and linked into the executable.
 if (WIN32)
@@ -162,7 +172,7 @@ add_library(spartanportgpu ${SPARTANGPU_KIND} ${VIDEO_CORE} ${RECOMPILER} ${COMM
     shadps4/core/libraries/gnmdriver/gnmdriver.cpp
     shadps4/core/libraries/videoout/driver.cpp shadps4/core/libraries/videoout/video_out.cpp
     shadps4/core/libraries/kernel/equeue.cpp ${AVPLAYER}
-    shadps4/core/libraries/videodec/video_utils.cpp)
+    ${VIDEO_UTILS})
 add_dependencies(spartanportgpu host_shaders)
 # In-game settings menu: Dear ImGui (third_party/imgui, MIT) with its Vulkan backend, and an
 # embedded Cyrillic font (third_party/fonts).
@@ -185,7 +195,12 @@ elseif (NOT WIN32)
 endif()
 target_link_libraries(spartanportgpu PRIVATE ffx-vulkan::portable ffx-vulkan::fsr4-v07-vulkan)
 target_link_libraries(spartanportgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
-    tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::FFMPEG miniz::miniz sirit)
+    tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 miniz::miniz sirit)
+if (PS4MAC_ARM64)
+    target_link_libraries(spartanportgpu PUBLIC "-framework ApplicationServices")
+else()
+    target_link_libraries(spartanportgpu PUBLIC PkgConfig::FFMPEG)
+endif()
 if (NOT PS4MAC_ARM64)
     target_link_libraries(spartanportgpu PUBLIC Zydis::Zydis)
 endif()
@@ -310,9 +325,11 @@ target_include_directories(motion-history-test PRIVATE ..)
 add_executable(motion-shader-test EXCLUDE_FROM_ALL ../tests/test_motion_shaders.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(motion-shader-test PRIVATE shim shadps4 third_party/gcn/include)
 target_link_libraries(motion-shader-test PRIVATE spartanportgpu)
+if (NOT PS4MAC_ARM64)
 add_executable(png-decode-test EXCLUDE_FROM_ALL ../tests/test_png_decode.cpp shim/spartanport_png.cpp)
 target_compile_options(png-decode-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_link_libraries(png-decode-test PRIVATE PkgConfig::FFMPEG)
+endif()
 add_executable(aliasing-test EXCLUDE_FROM_ALL ../tests/test_aliasing.cpp
     shadps4/video_core/texture_cache/aliasing.cpp shadps4/video_core/texture_cache/host_compatibility.cpp)
 target_compile_options(aliasing-test PRIVATE -UNDEBUG)
@@ -447,3 +464,14 @@ target_link_libraries(fsr4-bench PRIVATE ffx-vulkan::fsr4-v07-vulkan ffx-vulkan:
 
 add_executable(cheat-hook-test ../tests/test_cheat_hook.cpp)
 target_compile_options(cheat-hook-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+
+# ps4mac_port: the native arm64 graphics service (service/), with the video core linked in. It
+# exports the runtime_* functions the library resolves at load (service/service_runtime.c), as
+# the x86 runtime executable does.
+if (PS4MAC_ARM64)
+    add_executable(ps4mac_service ../service/ps4mac_service.c ../service/service_runtime.c)
+    set_target_properties(ps4mac_service PROPERTIES C_STANDARD 17 C_EXTENSIONS ON
+        BUILD_RPATH "@executable_path;${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_options(ps4mac_service PRIVATE -Wall -Wextra)
+    target_link_libraries(ps4mac_service PRIVATE spartanportgpu)
+endif()

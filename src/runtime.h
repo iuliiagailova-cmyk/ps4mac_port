@@ -81,12 +81,18 @@ int32_t runtime_guest_errno(int host_errno);
 void *runtime_low_map(size_t size, int prot);
 /* ps4mac_port graphics service (macOS): guest memory sharing (runtime_memory.c). Observer kinds:
  * 0 = pool object at offset phys, 1 = low object at offset phys, 2 = range gone. */
-typedef void (*RuntimeMappingObserver)(uintptr_t address, uint64_t size, int kind, uint64_t phys);
+/* kind: 0 mapped (phys = pool offset), 2 unmapped, 3 protection changed; prot: host PROT_* bits. */
+typedef void (*RuntimeMappingObserver)(uintptr_t address, uint64_t size, int kind, uint64_t phys, int prot);
 void runtime_memory_share(int *pool_fd, uint64_t *pool_size, int *low_fd, uint64_t *low_base,
                           uint64_t *low_size, uint64_t *user_min, uint64_t *user_max);
 void runtime_memory_set_mapping_observer(RuntimeMappingObserver observer);
 int runtime_memory_is_shared_low(uintptr_t address, uint64_t size);
 void runtime_bridge_start(void); /* runtime_bridge.c: starts the service when PS4MAC_SERVICE is set */
+/* With the service running: hands it the video core's settings (SpartanGpuConfig) and lets it
+ * start the video core. Returns 0 when there is no service. */
+int runtime_bridge_gpu_init(const char *title, const char *serial, const char *user_dir, uint32_t sdk_version,
+                            uint32_t psf_attributes, int32_t width, int32_t height);
+uint64_t runtime_process_start_ns(void); /* runtime_kernel.c: the process clock origin, CLOCK_MONOTONIC */
 /* Windows and macOS: reserves the PS4 user address range (no-op on Linux). */
 void runtime_memory_reserve(void);
 uintptr_t runtime_ajm_resolve(const char *name);

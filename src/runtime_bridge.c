@@ -18,6 +18,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -37,12 +38,29 @@ static void send_message(const Ps4macMessage *m) {
     pthread_mutex_unlock(&push_lock);
 }
 
-static void observe_mapping(uintptr_t address, uint64_t size, int kind, uint64_t phys) {
+static void observe_mapping(uintptr_t address, uint64_t size, int kind, uint64_t phys, int prot) {
     if (!block || kind == 1) return; /* the low object is mapped whole by the service */
     const Ps4macMessage m = {
-        .kind = kind == 2 ? PS4MAC_MEMORY_UNMAP : PS4MAC_MEMORY_MAP, .a = address, .b = size, .c = phys,
+        .kind = kind == 2 ? PS4MAC_MEMORY_UNMAP : kind == 3 ? PS4MAC_MEMORY_PROTECT : PS4MAC_MEMORY_MAP,
+        .a = address, .b = size, .c = phys, .d = (uint64_t)prot,
     };
     send_message(&m);
+}
+
+int runtime_bridge_gpu_init(const char *title, const char *serial, const char *user_dir, uint32_t sdk_version,
+                            uint32_t psf_attributes, int32_t width, int32_t height) {
+    if (!block) return 0;
+    Ps4macGpuConfig *c = &block->gpu_config;
+    snprintf(c->title, sizeof(c->title), "%s", title ? title : "");
+    snprintf(c->serial, sizeof(c->serial), "%s", serial ? serial : "");
+    snprintf(c->user_dir, sizeof(c->user_dir), "%s", user_dir ? user_dir : "");
+    c->sdk_version = sdk_version;
+    c->psf_attributes = psf_attributes;
+    c->width = width;
+    c->height = height;
+    const Ps4macMessage m = {.kind = PS4MAC_GPU_INIT};
+    send_message(&m); /* the ring's release store publishes the configuration */
+    return 1;
 }
 
 /* Sends checksums of a few guest ranges; the replies are compared by the reply thread. */
@@ -114,6 +132,48 @@ static void *watch_thread(void *unused) {
     return NULL;
 }
 
+/* The service's environment: the guest's, except two variables its libraries read at load.
+ * VK_DRIVER_FILES names the arm64 KosmicKrisp (PS4MAC_SERVICE_ICD, else vulkan/ next to the
+ * service, else the arm64 dependency prefix); SPARTAN_GPU_USER_DIR gets an arm64/ folder so the
+ * two video cores (step 3.3b) never share pipeline caches. */
+static char **service_environment(const char *service) {
+    extern char **environ;
+    static char icd[1024], user[1024];
+    const char *icd_env = getenv("PS4MAC_SERVICE_ICD");
+    if (icd_env && *icd_env) snprintf(icd, sizeof(icd), "VK_DRIVER_FILES=%s", icd_env);
+    else {
+        char dir[1024];
+        snprintf(dir, sizeof(dir), "%s", service);
+        char *slash = strrchr(dir, '/');
+        if (slash) *slash = 0; else snprintf(dir, sizeof(dir), ".");
+        char path[1024];
+        snprintf(path, sizeof(path), "%s/vulkan/kosmickrisp_mesa_icd.json", dir);
+        if (access(path, R_OK)) {
+            const char *home = getenv("HOME");
+            snprintf(path, sizeof(path), "%s/Library/Caches/ps4mac-arm64-deps/share/vulkan/icd.d/kosmickrisp_mesa_icd.json",
+                     home ? home : "");
+        }
+        snprintf(icd, sizeof(icd), "VK_DRIVER_FILES=%s", path);
+    }
+    const char *user_env = getenv("SPARTAN_GPU_USER_DIR");
+    char user_dir[900];
+    snprintf(user_dir, sizeof(user_dir), "%s/arm64", user_env && *user_env ? user_env : "user");
+    mkdir(user_dir, 0755); /* the library falls back to another folder when it does not exist */
+    snprintf(user, sizeof(user), "SPARTAN_GPU_USER_DIR=%s", user_dir);
+    size_t n = 0;
+    while (environ[n]) ++n;
+    char **env = calloc(n + 3, sizeof(char *));
+    size_t k = 0;
+    for (size_t i = 0; i < n; ++i)
+        if (strncmp(environ[i], "VK_DRIVER_FILES=", 16) && strncmp(environ[i], "VK_ICD_FILENAMES=", 17) &&
+            strncmp(environ[i], "SPARTAN_GPU_USER_DIR=", 21))
+            env[k++] = environ[i];
+    env[k++] = icd;
+    env[k++] = user;
+    env[k] = NULL;
+    return env;
+}
+
 void runtime_bridge_start(void) {
     const char *service = getenv("PS4MAC_SERVICE");
     if (!service || !*service) return;
@@ -130,6 +190,7 @@ void runtime_bridge_start(void) {
     runtime_memory_share(&pool_fd, &block->pool_size, &low_fd, &block->low_base, &block->low_size,
                          &block->user_min, &block->user_max);
     block->version = PS4MAC_BRIDGE_VERSION;
+    block->clock_start_ns = runtime_process_start_ns();
     block->page_size = (uint32_t)getpagesize();
     atomic_store(&block->guest_alive, 1);
 
@@ -141,8 +202,8 @@ void runtime_bridge_start(void) {
     posix_spawn_file_actions_init(&actions);
     posix_spawn_file_actions_adddup2(&actions, sockets[1], 3);
     char *argv[] = {(char *)service, "--socket", "3", NULL};
-    extern char **environ;
-    if (posix_spawn(&service_pid, service, &actions, NULL, argv, environ)) {
+    char **env = service_environment(service);
+    if (posix_spawn(&service_pid, service, &actions, NULL, argv, env)) {
         fprintf(stderr, "STOP: cannot start the graphics service %s: %s\n", service, strerror(errno));
         exit(21);
     }
@@ -187,4 +248,9 @@ void runtime_bridge_start(void) {
 }
 #else
 void runtime_bridge_start(void) {}
+int runtime_bridge_gpu_init(const char *title, const char *serial, const char *user_dir, uint32_t sdk_version,
+                            uint32_t psf_attributes, int32_t width, int32_t height) {
+    (void)title; (void)serial; (void)user_dir; (void)sdk_version; (void)psf_attributes; (void)width; (void)height;
+    return 0;
+}
 #endif

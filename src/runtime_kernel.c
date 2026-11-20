@@ -43,6 +43,7 @@ static int32_t fail_posix(int e) { *runtime_errno()=runtime_guest_errno(e); retu
 /* ---- clocks and sleeping ---- */
 static struct timespec process_start;
 __attribute__((constructor)) static void remember_start(void) { clock_gettime(CLOCK_MONOTONIC,&process_start); }
+uint64_t runtime_process_start_ns(void) { return (uint64_t)process_start.tv_sec*1000000000+(uint64_t)process_start.tv_nsec; }
 static int host_clock(uint32_t id,clockid_t *out) {
     switch (id) {
     case 0: case 9: case 10: *out=CLOCK_REALTIME; return 1;            /* REALTIME(_PRECISE/_FAST) */
