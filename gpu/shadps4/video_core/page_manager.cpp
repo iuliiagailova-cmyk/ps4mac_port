@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <new>
 #include <chrono>
 #include <boost/container/small_vector.hpp>
 #include "spartanport_toggles.h"
@@ -54,8 +55,24 @@ struct PageManager::Impl {
     static constexpr size_t NUM_ADDRESS_LOCKS = NUM_ADDRESS_PAGES / PAGES_PER_LOCK;
     inline static Vulkan::Rasterizer* rasterizer;
 
-    Impl() = default;
+    // User-provided: `: Impl()` in the derived classes would otherwise value-initialize, i.e.
+    // write zeros over all of cached_pages.
+    Impl() {}
     virtual ~Impl() = default;
+
+    // spartanport: cached_pages covers the 40-bit address space (512 MiB). calloc hands out
+    // pages the system zeroes on first touch, and the array is left uninitialized below, so
+    // only the pages of tracked memory become resident (it was all of it: 537 MB on 8 GB Macs).
+    static void* operator new(size_t size) {
+        void* memory = std::calloc(1, size);
+        if (!memory) {
+            throw std::bad_alloc();
+        }
+        return memory;
+    }
+    static void operator delete(void* memory) {
+        std::free(memory);
+    }
 
     virtual void OnMap(VAddr address, size_t size) {
         // No-op
@@ -231,7 +248,7 @@ struct PageManager::Impl {
         release_pending();
     }
 
-    std::array<PageState, NUM_ADDRESS_PAGES> cached_pages{};
+    std::array<PageState, NUM_ADDRESS_PAGES> cached_pages; // zero from calloc (operator new)
 #ifdef PTHREAD_ADAPTIVE_MUTEX_INITIALIZER_NP
     using LockType = Common::AdaptiveMutex;
 #else
