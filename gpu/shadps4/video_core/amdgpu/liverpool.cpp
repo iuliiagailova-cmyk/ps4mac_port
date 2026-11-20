@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "spartanport_trace.h"
 #include <array>
 #include <mutex>
 #include <atomic>
@@ -153,7 +154,11 @@ void Liverpool::Process(std::stop_token stoken) {
                 }
                 task = queue.submits.front();
             }
-            task.resume();
+            SpartanTrace::Poll();
+            {
+                SpartanTrace::Scope trace_scope{"A: process commands", static_cast<std::uint64_t>(curr_qid)};
+                task.resume();
+            }
 
             if (task.done()) {
                 task.destroy();
@@ -320,6 +325,7 @@ struct EopTiming {
 };
 
 void SignalEop(const PM4CmdEventWriteEop& eop) {
+    SpartanTrace::Mark("fence EOP written");
     eop.SignalFence(
         [](void* address, u64 data, u32 num_bytes) {
             auto* memory = Core::Memory::Instance();
@@ -430,6 +436,7 @@ void RunWriteData(Vulkan::Rasterizer& rasterizer, const u8* data) {
 }
 
 void RunEventWriteEos(Vulkan::Rasterizer& rasterizer, const u8* data) {
+    SpartanTrace::Scope trace_scope{"B: EOS fence (sync)"};
     const auto& event_eos = *reinterpret_cast<const PM4CmdEventWriteEos*>(data);
     // Copies deferred to the recording thread precede writes the guest sees.
     rasterizer.WaitHostCopies();

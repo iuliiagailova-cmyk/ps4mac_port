@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2025 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "spartanport_trace.h"
 #include <thread>
 #include <algorithm>
 #include <cstdio>
@@ -287,6 +288,7 @@ void Scheduler::WaitDeferredSignals() {
 }
 
 void Scheduler::WaitHostCopies() {
+    SpartanTrace::Scope trace_scope{"wait host copies"};
     if (host_copies_done.load(std::memory_order_acquire) < host_copies_issued) {
         SpartanStats::WaitTimer timer{SpartanStats::host_copies_wait_ns};
         SpartanStats::host_copy_waits.fetch_add(1, std::memory_order_relaxed);
@@ -335,6 +337,7 @@ void Scheduler::KickRecording(bool force) {
 }
 
 void Scheduler::SyncRecording() {
+    SpartanTrace::Scope trace_scope{"sync recording"};
     if (!recording_threaded) {
         return;
     }
@@ -376,7 +379,11 @@ void Scheduler::RecorderThread(std::stop_token stoken) {
             recorder_busy = true;
         }
         // current_cmdbuf only changes after SyncRecording(), which waits for this thread.
-        chunk->Execute(current_cmdbuf);
+        {
+            SpartanTrace::Scope trace_scope{"R: record chunk"};
+            chunk->Execute(current_cmdbuf);
+        }
+        SpartanTrace::Poll();
         {
             std::scoped_lock lk{recorder_mutex};
             free_chunks.push_back(std::move(chunk));
@@ -399,6 +406,7 @@ void Scheduler::Flush() {
 }
 
 void Scheduler::Finish(std::source_location caller) {
+    SpartanTrace::Scope trace_scope{"Finish (submit + wait GPU)"};
     // When finishing, we need to wait for the submission to have executed on the device.
     const u64 presubmit_tick = CurrentTick();
     const bool diagnose = WaitDiagnostics::Enabled();
@@ -418,6 +426,14 @@ void Scheduler::WaitSubmitted(std::source_location caller) {
 }
 
 void Scheduler::Wait(u64 tick, std::source_location caller, u64 submit_ns) {
+    // Arg: caller file hash * 100000 + line (the trace analysis maps it back).
+    SpartanTrace::Scope trace_scope{"wait GPU tick", std::uint64_t(caller.line()) + 100000ull * (std::hash<std::string_view>{}(caller.file_name()) % 1000)};
+    if (SpartanTrace::recording.load(std::memory_order_relaxed)) {
+        static std::atomic<int> printed{0};
+        if (printed.fetch_add(1) < 40) {
+            std::printf("Trace wait site: %s:%u (%s)\n", caller.file_name(), caller.line(), caller.function_name());
+        }
+    }
     const bool diagnose = WaitDiagnostics::Enabled();
     auto start = diagnose ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     if (tick >= work_semaphore.CurrentTick()) {
@@ -482,6 +498,11 @@ void Scheduler::AllocateWorkerCommandBuffers() {
 }
 
 void Scheduler::SubmitExecution(SubmitInfo& info) {
+    SpartanTrace::Scope trace_scope{"submit to Metal", CurrentTick()};
+    if (SpartanTrace::recording.load(std::memory_order_relaxed)) {
+        const u64 tick = CurrentTick();
+        DeferPriorityOperation([tick] { SpartanTrace::Mark("GPU tick done", tick); });
+    }
     std::scoped_lock lk{submit_mutex};
     const u64 signal_value = work_semaphore.NextTick();
 

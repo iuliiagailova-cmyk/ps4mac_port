@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "spartanport_trace.h"
 #include <xxhash.h>
 #include "video_core/renderer_vulkan/ui_composition.h"
 #include "spartanport_toggles.h"
@@ -460,6 +461,7 @@ void Rasterizer::DrainDrawPipe(u32 reason, u32 line, const char* function) {
     if (!draw_pipe || !OnStageA()) {
         return;
     }
+    SpartanTrace::Scope trace_scope{"A: drain draw pipe", reason};
     static const bool stats = std::getenv("SPARTAN_FRAME_STATS") != nullptr;
     if (!stats) {
         draw_pipe->Drain(reason);
@@ -747,6 +749,7 @@ bool Rasterizer::RunInOrder(OrderedTask task, const void* data, u32 size, u64 to
 }
 
 void Rasterizer::RunDrawPacket(void* context, const u8* data, u32 size) {
+    SpartanTrace::Scope trace_scope{"B: packet"};
     auto& self = *static_cast<Rasterizer*>(context);
     if (*reinterpret_cast<const PacketKind*>(data) == PacketKind::Task) {
         const auto& task = *reinterpret_cast<const TaskPacket*>(data);
