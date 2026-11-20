@@ -319,15 +319,6 @@ static void queue_hook(int kind, uintptr_t address, uint64_t size) {
     pending[pending_count++]=(PendingHook){kind,address,size};
 }
 static void flush_hooks(void);
-/* Tells the GPU that [address, address+size) is mapped, whatever the guest has mapped there
- * (PRT apertures: shadPS4's MemoryManager::SetPrtArea). Its reads of unmapped pages return zeros
- * (CopySparseMemory), and the guest's own mappings inside still notify as usual. */
-void runtime_memory_gpu_map(uintptr_t address, uint64_t size) {
-    write_lock();
-    queue_hook(HOOK_MAP,address,size);
-    write_unlock();
-    flush_hooks();
-}
 /* Runs queued GPU notifications; callers invoke it after dropping the lock. */
 static void flush_hooks(void) {
     for (;;) {
@@ -822,7 +813,7 @@ int runtime_memory_write_backing(uintptr_t address, const void *data, uint64_t s
 }
 /* Per-thread cache of recently found regions for the GPU's per-draw queries:
  * entries hold for as long as the table generation they were read at. */
-typedef struct { uint64_t generation; uintptr_t start, end; int kind; } CachedRegion;
+typedef struct { uint64_t generation; uintptr_t start, end; int kind, prot; } CachedRegion;
 static __thread CachedRegion region_cache[8];
 static __thread unsigned region_cache_next;
 static const CachedRegion *cached_region(uintptr_t address) {
@@ -838,7 +829,7 @@ static const CachedRegion *cached_region(uintptr_t address) {
 static void cache_region(size_t i) {
     uint64_t generation=__atomic_load_n(&table_generation,__ATOMIC_ACQUIRE);
     if (i==vma_count || (generation & 1)) return;
-    region_cache[region_cache_next++ % 8]=(CachedRegion){generation,vmas[i].start,vmas[i].end,vmas[i].kind};
+    region_cache[region_cache_next++ % 8]=(CachedRegion){generation,vmas[i].start,vmas[i].end,vmas[i].kind,vmas[i].prot};
 }
 /* Mapped length from address, up to size, across adjacent mappings. */
 uint64_t runtime_memory_clamp(uintptr_t address, uint64_t size) {
@@ -857,13 +848,16 @@ uint64_t runtime_memory_clamp(uintptr_t address, uint64_t size) {
 /* Region around address: [start,end) mapped or a gap; 0 past the last mapping. */
 int runtime_memory_region(uintptr_t address, uintptr_t *start, uintptr_t *end, int *mapped) {
     const CachedRegion *c=(runtime_disabled_optimizations & 1) ? NULL : cached_region(address);
-    if (c) { *start=c->start; *end=c->end; *mapped=c->kind!=KIND_RESERVED; return 1; }
+    /* Mapped for the GPU's copies: present and readable by the guest (a PROT_NONE mapping
+     * faults, e.g. pages of a PRT aperture the game has made inaccessible). */
+    if (c) { *start=c->start; *end=c->end; *mapped=c->kind!=KIND_RESERVED && (host_prot(c->prot) & PROT_READ); return 1; }
     read_lock();
     size_t i=vma_index(address);
     int found=i<vma_count;
     if (found && vmas[i].start<=address) {
         cache_region(i);
-        *start=vmas[i].start; *end=vmas[i].end; *mapped=vmas[i].kind!=KIND_RESERVED;
+        *start=vmas[i].start; *end=vmas[i].end;
+        *mapped=vmas[i].kind!=KIND_RESERVED && (host_prot(vmas[i].prot) & PROT_READ);
     } else if (found) {
         *start=i ? vmas[i-1].end : 0; *end=vmas[i].start; *mapped=0;
     }
