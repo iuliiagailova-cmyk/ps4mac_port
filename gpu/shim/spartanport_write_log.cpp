@@ -17,7 +17,7 @@
 #endif
 #include <unistd.h>
 #endif
-#include <x86intrin.h>
+#include "common/cpu_relax.h"
 
 namespace SpartanWriteLog {
 namespace {
@@ -66,7 +66,7 @@ void Note(std::uint64_t address, const void* data, std::uint64_t size, Source so
 
 void Record(std::uint64_t address, const void* data, std::uint64_t size, Source source) {
     static thread_local const std::uint32_t tid = static_cast<std::uint32_t>(gettid());
-    Entry e{address, size, 0, __rdtsc(), source, tid};
+    Entry e{address, size, 0, Common::CycleCount(), source, tid};
     std::memcpy(&e.first, data, size < 8 ? size : 8);
     Push(ring, head, e);
     // Only small writes are scanned: scanning downloads of megabytes delays them enough to hide
@@ -97,6 +97,10 @@ extern "C" void spartanportgpu_dump_guest_writes(void* ucontext) {
     // The loader passes EXCEPTION_POINTERS (see signal_context.cpp).
     const CONTEXT* c = static_cast<const EXCEPTION_POINTERS*>(ucontext)->ContextRecord;
     const std::uint64_t regs[] = {c->Rax, c->Rbx, c->Rcx, c->Rdx, c->Rsi, c->Rdi, c->R14, c->R15};
+#elif defined(__APPLE__) && defined(ARCH_ARM64)
+    // The native graphics service: no guest registers here (the guest's fault is in its process).
+    (void)ucontext;
+    const std::uint64_t regs[8] = {};
 #elif defined(__APPLE__)
     const auto& s = static_cast<const ucontext_t*>(ucontext)->uc_mcontext->__ss;
     const std::uint64_t regs[] = {s.__rax, s.__rbx, s.__rcx, s.__rdx, s.__rsi, s.__rdi, s.__r14, s.__r15};
@@ -114,13 +118,13 @@ extern "C" void spartanportgpu_dump_guest_writes(void* ucontext) {
     }
     const char* sources[] = {"backing",      "WriteData",           "fence",
                              "EOP (decoded)", "WriteData (decoded)", "EOS (decoded)"};
-    const std::uint64_t now = __rdtsc();
+    const std::uint64_t now = Common::CycleCount();
     const auto print = [&](const Entry& e, const char* what) {
         std::fprintf(stderr,
                      "Write log: %s %s %#llx +%llu first %#llx tid %u, %.3f s before the fault\n",
                      what, e.source < 6 ? sources[e.source] : "?", (unsigned long long)e.address,
                      (unsigned long long)e.size, (unsigned long long)e.first, e.tid,
-                     double(now - e.tsc) / 3.0e9);
+                     double(now - e.tsc) / Common::CycleCountsPerSecond());
     };
     const std::uint64_t nh = hits_head.load();
     for (std::uint64_t i = nh > hits.size() ? nh - hits.size() : 0; i < nh; ++i) {

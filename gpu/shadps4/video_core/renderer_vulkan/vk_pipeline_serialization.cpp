@@ -29,6 +29,7 @@
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_lighting_test.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
+#include "shader_recompiler/ir/passes/srt_bytecode.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
 #include "video_core/renderer_vulkan/vk_warmup_inbox.h"
 
@@ -49,6 +50,11 @@ u32 CurrentShaderBinaryVersion() {
         Serialization::ShaderBinaryVersion,
         LightingTest::ShaderBinarySalt(LightingTest::Current().dref,
                                        AmdPathsOff::Current().shaderext));
+}
+// ps4mac_port: shader metadata holds the SRT walker, x86-64 code or bytecode; each format has its
+// own metadata version, so an entry of the other one is stale and rebuilt.
+u32 CurrentShaderMetaVersion() {
+    return Serialization::ShaderMetaVersion + (Shader::SrtBytecode::Enabled() ? 0x10000u : 0u);
 }
 } // namespace
 
@@ -608,7 +614,7 @@ void RegisterShaderMeta(const Shader::Info& info,
     Serialization::Archive ar;
     Serialization::Writer meta{ar};
 
-    meta.Write(Serialization::ShaderMetaVersion);
+    meta.Write(CurrentShaderMetaVersion());
     meta.Write(CurrentShaderBinaryVersion());
 
     meta.Write(perm_hash);
@@ -638,7 +644,7 @@ bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
 
     u32 meta_version{};
     meta.Read(meta_version);
-    if (meta_version != Serialization::ShaderMetaVersion) {
+    if (meta_version != CurrentShaderMetaVersion()) {
         return false;
     }
 

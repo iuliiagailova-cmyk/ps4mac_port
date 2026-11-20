@@ -3,6 +3,10 @@
 
 #pragma once
 
+#include <cstdio>
+
+#include <atomic>
+
 #include <span>
 #include <vector>
 #include <boost/container/static_vector.hpp>
@@ -13,6 +17,7 @@
 #include "shader_recompiler/frontend/tessellation.h"
 #include "shader_recompiler/ir/attribute.h"
 #include "shader_recompiler/ir/passes/srt.h"
+#include "shader_recompiler/ir/passes/srt_bytecode.h"
 #include "shader_recompiler/ir/reg.h"
 #include "shader_recompiler/ir/type.h"
 #include "shader_recompiler/params.h"
@@ -237,12 +242,51 @@ struct Info : InfoPersistent {
         bnd.user_data += ud_mask.NumRegs();
     }
 
+    // ps4mac_port: SPARTAN_SRT_INTERPRETER=verify — the x86-64 walker must fill the same values.
+    void VerifySrtWalker(const u8* blob) {
+        auto* x86 = reinterpret_cast<PFN_SrtWalker>(SrtBytecode::Reference(blob));
+        if (!x86) {
+            return;
+        }
+        std::vector<u32> expected(flattened_ud_buf.size());
+        std::memcpy(expected.data(), user_data.data(), user_data.size_bytes());
+        x86(user_data.data(), expected.data());
+        static std::atomic<u64> checks{0}, mismatches{0};
+        const u64 n = checks.fetch_add(1) + 1;
+        if (expected != flattened_ud_buf) {
+            const u64 m = mismatches.fetch_add(1) + 1;
+            if (m <= 20) {
+                for (size_t i = 0; i < expected.size(); ++i) {
+                    if (expected[i] != flattened_ud_buf[i]) {
+                        std::fprintf(stderr, "SRT verify: shader %#llx dword %zu: x86 %#x, bytecode %#x\n",
+                                     (unsigned long long)pgm_hash, i, expected[i], flattened_ud_buf[i]);
+                        break;
+                    }
+                }
+            }
+        }
+        if ((n & 0xFFFF) == 0) {
+            std::fprintf(stderr, "SRT verify: %llu walks, %llu mismatches\n", (unsigned long long)n,
+                         (unsigned long long)mismatches.load());
+        }
+    }
+
     void RefreshFlatBuf() {
         flattened_ud_buf.resize(srt_info.flattened_bufsize_dw);
         ASSERT(user_data.size() <= NUM_USER_DATA_REGS);
         std::memcpy(flattened_ud_buf.data(), user_data.data(), user_data.size_bytes());
         if (srt_info.walker_func) {
-            srt_info.walker_func(user_data.data(), flattened_ud_buf.data());
+            // ps4mac_port: the walker is x86-64 code or bytecode (srt_bytecode.h).
+            const auto* blob = reinterpret_cast<const u8*>(srt_info.walker_func);
+            if (SrtBytecode::IsBytecode(blob, srt_info.walker_func_size)) {
+                SrtBytecode::Run(blob, srt_info.walker_func_size, user_data.data(),
+                                 flattened_ud_buf.data());
+                if (SrtBytecode::Verify()) {
+                    VerifySrtWalker(blob);
+                }
+            } else {
+                srt_info.walker_func(user_data.data(), flattened_ud_buf.data());
+            }
         }
     }
 

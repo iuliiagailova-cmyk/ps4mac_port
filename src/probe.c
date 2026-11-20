@@ -114,6 +114,14 @@ static void protect(void *p, size_t size, unsigned flags) {
     /* ps4mac_port: shared memory cannot be made executable. Code in low memory shared with the
      * graphics service (PS4MAC_SERVICE) becomes a private copy; the service needs data, not code. */
     if ((flags & 1) && runtime_memory_is_shared_low((uintptr_t)p, size)) {
+        /* A writable code segment stays private too: the graphics service would not see writes
+         * the game makes to it later. Code is not GPU data in the games seen so far; warn once. */
+        static int warned;
+        if ((flags & 2) && !warned) {
+            warned = 1;
+            fprintf(stderr, "Bridge: warning: a writable and executable segment at %p (+%#zx) is not "
+                            "shared with the graphics service\n", p, size);
+        }
         void *copy = malloc(size);
         if (!copy) fail("out of memory");
         if (mprotect(p, size, PROT_READ)) fail("mprotect failed"); /* it may be inaccessible by now */
