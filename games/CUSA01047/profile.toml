@@ -1,0 +1,30 @@
+# Ratchet & Clank (2016, PS4) — game profile for ps4mac_port.
+# Data only: the core reads it by the Title ID in sce_sys/param.sfo. Environment variables (and
+# spartanport.ini, for the options it holds) win over the defaults below.
+
+title = "Ratchet & Clank"
+title_ids = ["CUSA01047"]          # EU; CUSA01073 and CUSA01928 not tested yet
+match_title = "Ratchet"
+app_name = "RnCPort"               # window title, in-game menu, data folder (~/Library/Application Support/RnCPort)
+icon = "branding/rncport-icon.png"
+
+[patches]
+file = "patches.xml"               # "Bug Fix - Address Space Base": required on macOS
+app_ver = "01.00"
+
+[env]
+# The game reads GPU results every frame; stale readbacks keep CPU and GPU from waiting for each
+# other (readbacks are published as soon as the GPU completes them).
+SPARTAN_DEFERRED_READBACK = "1"
+SPARTAN_STALE_READBACK = "1"
+# Submit every 100 draws/dispatches: the GPU starts while the frame is still recorded
+# (first level on an M1: 5.8 -> 7.9 FPS; 30 and 300 were slower).
+SPARTAN_FLUSH_DRAWS = "100"
+
+[known_issues]
+fire_green_bars = "Rare green vertical bars over fire for half a second (seen once with stale readbacks)"
+start_black_screen = "Occasional black screen at start (a race, not found yet)"
+
+[test]
+# Autotest (autotest/drive.py): title screen -> Continue, seconds after launch.
+menu = ["42 hold cross", "42.3 release", "48 hold cross", "48.3 release"]

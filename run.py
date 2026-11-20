@@ -183,11 +183,11 @@ def pause_menu_args(game, out, mounts):
     return [part for path in made.values() for part in ('--pause-menu', str(path))]
 
 
-# RnCPort defaults: the dump in a CUSA01047 folder next to the RnCPort folder; settings, saves and
-# generated files in ~/Library/Application Support/RnCPort on macOS (elsewhere: the RnCPort folder).
-DEFAULT_GAME_DIR = PORT.parent / 'CUSA01047'
-DEFAULT_DATA_DIR = (Path.home() / 'Library' / 'Application Support' / 'RnCPort'
-                    if platform.system() == 'Darwin' else PORT)
+# ps4mac_port defaults: the dump in a folder named after a profiled Title ID (games/<id>/) next to
+# the port or one level further; settings, saves and generated files in
+# ~/Library/Application Support/<the profile's app_name> on macOS (elsewhere: the port folder).
+def default_data_dir(app_name):
+    return Path.home() / 'Library' / 'Application Support' / app_name if platform.system() == 'Darwin' else PORT
 
 
 def main():
@@ -203,7 +203,17 @@ def main():
     sys.path.insert(0, str(PORT / 'scripts'))
     import legacy
     legacy.forward_environment(env)
-    data = Path(env.get('SPARTAN_DATA_DIR', DEFAULT_DATA_DIR))
+    # The game and its profile (games/<id>/profile.toml).
+    import profiles
+    from patches import game_sfo
+    if not env.get('SPARTAN_GAME_DIR'):
+        found = profiles.default_game_dir(PORT)
+        env['SPARTAN_GAME_DIR'] = str(found or PORT.parent / 'game')
+    game_dir = Path(env['SPARTAN_GAME_DIR'])
+    sfo = game_sfo(game_dir)
+    port_profile = profiles.find(sfo.get('TITLE_ID'), sfo.get('TITLE'))
+    app_name = port_profile.app_name if port_profile else 'ps4mac_port'
+    data = Path(env.get('SPARTAN_DATA_DIR', default_data_dir(app_name)))
     legacy.copy_game_settings(data)
     out = data / 'out'
     out.mkdir(parents=True, exist_ok=True)
@@ -225,18 +235,20 @@ def main():
     mod_patch_files = mods.enabled_patch_files(env.get('SPARTAN_MODS_DIR', data / 'mods'),
                                                env.get('SPARTAN_MODS_CONFIG', data / 'mods.json'),
                                                env.get('SPARTAN_MODS_ENABLED', '1') != '0',
-                                               env.get('SPARTAN_GAME_DIR', DEFAULT_GAME_DIR))
+                                               env['SPARTAN_GAME_DIR'])
     extra_resolutions = [s for s in patches.resolution_names(mod_patch_files) if s not in graphics_options.RESOLUTIONS]
     env['SPARTAN_EXTRA_RESOLUTIONS'] = ';'.join(extra_resolutions)
     derived.append('SPARTAN_EXTRA_RESOLUTIONS')
     graphics, reverted = graphics_options.prepare(env['SPARTAN_CONFIG'], out / 'graphics_state.json', extra_resolutions)
     if reverted:
         print('Graphics: the last restart never reached the game; previous options restored', flush=True)
-    # Readback modes set explicitly in the environment (RnCPort tests) win over the defaults below.
-    explicit_readback = {k: env[k] for k in ('SPARTAN_DEFERRED_READBACK', 'SPARTAN_STALE_READBACK') if k in env}
+    # The profile's defaults: values given in the environment win, then spartanport.ini (for the
+    # options it holds), then the profile.
+    profile_env = port_profile.env if port_profile else {}
+    explicit = {k: env[k] for k in profile_env if k in env}
     env.update(graphics_options.environment(graphics))
-    # RnCPort: the project name in the window title and the in-game menu.
-    env.setdefault('SPARTAN_APP_NAME', 'RnCPort')
+    # The port's name (the profile's app_name) in the window title and the in-game menu.
+    env.setdefault('SPARTAN_APP_NAME', app_name)
     # Frame statistics in the log (a few lines every few seconds): every report then has FPS.
     env.setdefault('SPARTAN_FRAME_STATS', '1')
     # Macs with 8 GB or less: keep less idle upload memory around (GPU memory is system memory).
@@ -251,20 +263,19 @@ def main():
             env.setdefault('SPARTAN_STAGING_LARGE_IDLE_MS', '3000')
             env.setdefault('SPARTAN_STAGING_LARGE_KEEP_MB', '256')
             print('Memory: 8 GB Mac, upload buffers kept small (SPARTAN_STAGING_*)')
-    # Ratchet & Clank (CUSA01047): stale readbacks like God of War III (the game reads GPU
-    # results every frame; waiting for them serialized CPU and GPU). They hung its loading until
-    # readbacks were published when the GPU completes them. Known: rare green vertical bars over
-    # fire for half a second (stale or not, to be checked). Readback modes given in the
-    # environment still win over spartanport.ini.
-    ini = graphics_options.read_ini(env['SPARTAN_CONFIG'])
-    if patches.game_title_id(env.get('SPARTAN_GAME_DIR', DEFAULT_GAME_DIR)) == 'CUSA01047':
-        for name in ('SPARTAN_DEFERRED_READBACK', 'SPARTAN_STALE_READBACK'):
-            if name in explicit_readback:
-                env[name] = explicit_readback[name]
-        # Submit every 100 draws/dispatches: the GPU starts while the frame is still recorded
-        # (first level on an M1: 5.8 -> 7.9 FPS; 30 and 300 were slower).
-        env.setdefault('SPARTAN_FLUSH_DRAWS', '100')
-        print(f"Readback: deferred={env['SPARTAN_DEFERRED_READBACK']}, stale={env['SPARTAN_STALE_READBACK']} (CUSA01047 default: stale)", flush=True)
+    if port_profile:
+        ini = graphics_options.read_ini(env['SPARTAN_CONFIG'])
+        ini_keys = {'SPARTAN_DEFERRED_READBACK': 'deferred_readback',
+                    'SPARTAN_STALE_READBACK': 'stale_readback', 'SPARTAN_ASYNC_SHADERS': 'async_shaders'}
+        for name, value in profile_env.items():
+            if name in explicit:
+                env[name] = explicit[name]
+            elif ini_keys.get(name) not in ini:
+                env[name] = value
+        print(f"Profile: {port_profile.title} ({', '.join(port_profile.title_ids)}), games/{port_profile.folder.name}/profile.toml; "
+              + ', '.join(f'{k}={env.get(k)}' for k in profile_env), flush=True)
+    else:
+        print(f"Profile: none for {sfo.get('TITLE_ID') or game_dir} (games/*/profile.toml); core defaults", flush=True)
     if not env.get('SPARTAN_FSR411_DIR') and not (PORT / 'fsr4_411').is_dir() and (data / 'fsr4_411').is_dir():
         env['SPARTAN_FSR411_DIR'] = str(data / 'fsr4_411')
 
@@ -294,7 +305,7 @@ def main():
         sys.exit(20)
     missing = parse_cpu_features(features.stdout)
 
-    game = Path(env.get('SPARTAN_GAME_DIR', DEFAULT_GAME_DIR))
+    game = Path(env['SPARTAN_GAME_DIR'])
     if not (game / 'eboot.bin').is_file():
         fail(f'No eboot.bin in {game} (set SPARTAN_GAME_DIR).')
     update_view = None
@@ -331,10 +342,10 @@ def main():
         engine_fps = 60
         # The window shows the port's own icon (BMP: the format SDL loads without extra libraries); on
         # Linux also an application id the desktop entry matches, so the shell shows the same icon.
-        # RnCPort: its own icon (docs/branding), 256 px so the macOS Dock shows it sharp.
-        icon_file = PORT / 'docs' / 'branding' / 'rncport-icon.png'
+        # The game's icon from its profile, 256 px so the macOS Dock shows it sharp.
+        icon_file = port_profile.icon if port_profile else None
         if not WINDOWS:
-            env.setdefault('SDL_APP_ID', 'rncport')
+            env.setdefault('SDL_APP_ID', app_name.lower())
         try:
             from PIL import Image
             with Image.open(icon_file) as icon:
