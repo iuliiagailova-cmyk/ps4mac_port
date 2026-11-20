@@ -64,6 +64,7 @@ The game profile (patch `Bug Fix - Address Space Base`, precise readbacks) is ap
 - **~140 runtime functions** the game needs beyond God of War III: event flags and POSIX semaphores, thread scheduling parameters, time conversions, RFC 3339/2822 date parsing, and offline PSN services, dialogs, sockets and PlayGo.
 - **Runtime fixes:** the thread handle starts with a non-zero thread id (the game reads it right after `pthread_create`), timed waits carry a deadline of exactly one second, GPU commands may carry more than 128 KiB of data, the queue of GPU memory notifications grows as needed.
 - **Precise readbacks by default** for this game: it busy-waits until the GPU has written results to memory.
+- **Earlier GPU start:** the command buffer is submitted every 100 draws or dispatches (`SPARTAN_FLUSH_DRAWS`), so the GPU starts while the frame is still recorded; GPU-written buffers are read back from mapped memory without waiting for the whole GPU. First level on an M1: 5.8 → 7.9 FPS.
 - **GPU memory on 8 GB Macs:** large upload buffers are freed after a few seconds idle instead of after 3000 frames (never, at 1 FPS); about 1.9 GB of idle staging took the first level from ~1 FPS to 30 FPS.
 - **PRT apertures** are mapped for the GPU, as in shadPS4.
 - **Diagnostics:** `SPARTAN_THREAD_TRACE=1`, `SPARTAN_IMPORT_MAP=1` (with `--check-imports`), `SPARTAN_LAUNCH_PREFIX` (start under a debugger).
