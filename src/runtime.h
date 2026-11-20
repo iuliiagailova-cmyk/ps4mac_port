@@ -79,6 +79,13 @@ void runtime_thread_keys_cleanup(void);
 /* Guest-visible errno values are FreeBSD's. */
 int32_t runtime_guest_errno(int host_errno);
 void *runtime_low_map(size_t size, int prot);
+/* ps4mac_port graphics service (macOS): guest memory sharing (runtime_memory.c). Observer kinds:
+ * 0 = pool object at offset phys, 1 = low object at offset phys, 2 = range gone. */
+typedef void (*RuntimeMappingObserver)(uintptr_t address, uint64_t size, int kind, uint64_t phys);
+void runtime_memory_share(int *pool_fd, uint64_t *pool_size, int *low_fd, uint64_t *low_base,
+                          uint64_t *low_size, uint64_t *user_min, uint64_t *user_max);
+void runtime_memory_set_mapping_observer(RuntimeMappingObserver observer);
+void runtime_bridge_start(void); /* runtime_bridge.c: starts the service when PS4MAC_SERVICE is set */
 /* Windows and macOS: reserves the PS4 user address range (no-op on Linux). */
 void runtime_memory_reserve(void);
 uintptr_t runtime_ajm_resolve(const char *name);

@@ -269,6 +269,18 @@ static int pool(void) {
     return 0;
 }
 #ifdef __APPLE__
+/* ps4mac_port (step 3.2): the graphics service maps guest memory at the same addresses. The
+ * observer (runtime_bridge.c) hears every host mapping of guest memory: kind 0 = pool object at
+ * offset `phys`, kind 1 = low object at offset address - LOW_MIN, kind 2 = gone. */
+static RuntimeMappingObserver mapping_observer;
+static int low_fd=-1;
+static int share_low(void) {
+    static int share=-1;
+    if (share<0) share=getenv("PS4MAC_SERVICE") && *getenv("PS4MAC_SERVICE");
+    return share;
+}
+#endif
+#ifdef __APPLE__
 /* The user range is reserved at start (probe.c), before Metal and the system allocator can place
  * anything there; unmapped guest ranges go back to that reservation instead of being freed, so
  * host mappings never land inside it and MAP_FIXED never replaces one of them. */
@@ -426,6 +438,9 @@ static int32_t place(void **inout, uint64_t size, int prot, int flags, uint64_t 
         if (!address) return NO_MEMORY;
     }
     if (host_map(address,size,host_prot(prot),kind==KIND_RESERVED,phys)) return NO_MEMORY;
+#ifdef __APPLE__
+    if (mapping_observer) mapping_observer(address,size,kind==KIND_RESERVED ? 2 : 0,phys);
+#endif
     void *mapped=(void *)address;
     drop_range(address,address+size);
     if (vma_insert(vma_index(address),(Vma){address,address+size,kind,prot,type,phys})) return NO_MEMORY;
@@ -512,6 +527,9 @@ static int32_t unmap_locked(uintptr_t start, uint64_t size) {
     for (size_t i=vma_index(start); i<vma_count && vmas[i].start<end; ++i) {
         uintptr_t a=vmas[i].start>start ? vmas[i].start : start, b=vmas[i].end<end ? vmas[i].end : end;
         if (host_unmap(a,b-a)) return INVALID;
+#ifdef __APPLE__
+        if (mapping_observer && vmas[i].kind!=KIND_RESERVED) mapping_observer(a,b-a,2,0);
+#endif
     }
     drop_range(start,end);
     return 0;
@@ -720,6 +738,19 @@ uintptr_t runtime_memory_resolve(const char *name) {
 #define LOW_MAX USER_MIN
 #endif
 static uintptr_t low_next=LOW_MIN;
+#ifdef __APPLE__
+static void low_create(void) {
+    if (!share_low() || low_fd>=0) return;
+    char name[64];
+    snprintf(name,sizeof(name),"/ps4mac-low-memory-%d",(int)getpid());
+    low_fd=shm_open(name,O_RDWR|O_CREAT|O_EXCL,0600);
+    if (low_fd>=0) { shm_unlink(name); fcntl(low_fd,F_SETFD,FD_CLOEXEC); }
+    if (low_fd<0 || ftruncate(low_fd,(off_t)(LOW_MAX-LOW_MIN))) {
+        fputs("STOP: cannot create shared low memory for the graphics service\n",stderr);
+        exit(21);
+    }
+}
+#endif
 void *runtime_low_map(size_t size, int prot) {
     size=align_up(size,PAGE);
     write_lock();
@@ -735,9 +766,14 @@ void *runtime_low_map(size_t size, int prot) {
     void *p=MAP_FAILED;
     while (low_next+size<=LOW_MAX) {
 #ifdef __APPLE__
-        /* No MAP_FIXED_NOREPLACE: the address is a hint, and a mapping elsewhere is undone. */
-        p=mmap((void *)low_next,size,prot,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+        /* No MAP_FIXED_NOREPLACE: the address is a hint, and a mapping elsewhere is undone.
+         * With the graphics service, low memory comes from a shared object at offset
+         * address - LOW_MIN, so the service maps the same bytes (runtime_memory_share). */
+        low_create();
+        p=low_fd>=0 ? mmap((void *)low_next,size,prot,MAP_SHARED,low_fd,(off_t)(low_next-LOW_MIN))
+                    : mmap((void *)low_next,size,prot,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
         if (p!=MAP_FAILED && p!=(void *)low_next) { munmap(p,size); p=MAP_FAILED; }
+
 #else
         p=mmap((void *)low_next,size,prot,MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED_NOREPLACE,-1,0);
 #endif
@@ -893,3 +929,24 @@ void runtime_memory_report(void) {
            flexible_maps, flexible_bytes, protects, queries, vma_count);
 }
 
+
+#ifdef __APPLE__
+/* ps4mac_port: what the graphics service needs to map guest memory (runtime_bridge.c). */
+void runtime_memory_share(int *pool_out, uint64_t *pool_size, int *low_out, uint64_t *low_base,
+                          uint64_t *low_size, uint64_t *user_min, uint64_t *user_max) {
+    pool();
+    low_create();
+    *pool_out=pool_fd; *pool_size=POOL_SIZE+FLEX_SPAN;
+    *low_out=low_fd; *low_base=LOW_MIN; *low_size=LOW_MAX-LOW_MIN;
+    *user_min=USER_MIN; *user_max=USER_MAX;
+}
+/* Sets the observer and replays the current guest mappings to it. */
+void runtime_memory_set_mapping_observer(RuntimeMappingObserver observer) {
+    write_lock();
+    mapping_observer=observer;
+    if (observer)
+        for (size_t i=0;i<vma_count;++i)
+            if (vmas[i].kind!=KIND_RESERVED) observer(vmas[i].start,vmas[i].end-vmas[i].start,0,vmas[i].phys);
+    write_unlock();
+}
+#endif

@@ -1,0 +1,125 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later
+ * ps4mac_port step 3.2: the native arm64 graphics service, skeleton.
+ *
+ * Started by the guest side (src/runtime_bridge.c) with a Unix socket on fd 3. Receives the bridge
+ * block and the guest memory objects, reserves the PS4 user range and maps guest memory at the
+ * same addresses as the guest: the low object whole, pool ranges as the guest maps them (ring
+ * messages). Answers checksum requests. Exits when the guest side goes away (socket closed).
+ * The video core moves here in step 3.3.
+ */
+#include <errno.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include "../bridge/ps4mac_ring.h"
+
+static Ps4macSharedBlock *block;
+static int pool_fd = -1, low_fd = -1;
+static unsigned long long maps, unmaps, checks;
+
+static void fail(const char *what) {
+    fprintf(stderr, "ps4mac_service: %s: %s\n", what, strerror(errno));
+    exit(1);
+}
+
+static void receive_objects(int socket_fd) {
+    int fds[3] = {-1, -1, -1};
+    char control[CMSG_SPACE(sizeof(fds))];
+    char tag = 0;
+    struct iovec iov = {&tag, 1};
+    struct msghdr msg = {.msg_iov = &iov, .msg_iovlen = 1, .msg_control = control,
+                         .msg_controllen = sizeof(control)};
+    if (recvmsg(socket_fd, &msg, 0) != 1 || tag != 'B') fail("recvmsg");
+    struct cmsghdr *c = CMSG_FIRSTHDR(&msg);
+    if (!c || c->cmsg_type != SCM_RIGHTS) fail("no descriptors");
+    memcpy(fds, CMSG_DATA(c), sizeof(fds));
+    block = mmap(NULL, sizeof(Ps4macSharedBlock), PROT_READ | PROT_WRITE, MAP_SHARED, fds[0], 0);
+    if (block == MAP_FAILED) fail("map bridge block");
+    if (block->version != PS4MAC_BRIDGE_VERSION) {
+        fprintf(stderr, "ps4mac_service: bridge version %u, expected %u\n", block->version, PS4MAC_BRIDGE_VERSION);
+        exit(1);
+    }
+    pool_fd = fds[1];
+    low_fd = fds[2];
+}
+
+static void map_guest_memory(void) {
+    /* The PS4 user range, reserved like the guest does (runtime_memory_reserve). */
+    void *want = (void *)(uintptr_t)block->user_min;
+    void *p = mmap(want, block->user_max - block->user_min, PROT_NONE,
+                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    if (p != want) {
+        fprintf(stderr, "ps4mac_service: cannot reserve the PS4 range at %p (got %p)\n", want, p);
+        exit(1);
+    }
+    /* Low memory, whole: offset = address - low_base on both sides. */
+    if (low_fd >= 0) {
+        void *low = (void *)(uintptr_t)block->low_base;
+        void *q = mmap(low, block->low_size, PROT_READ | PROT_WRITE, MAP_SHARED, low_fd, 0);
+        if (q != low) {
+            fprintf(stderr, "ps4mac_service: cannot map low memory at %p (got %p)\n", low, q);
+            exit(1);
+        }
+    }
+}
+
+static void handle(const Ps4macMessage *m) {
+    switch (m->kind) {
+    case PS4MAC_MEMORY_MAP:
+        if (mmap((void *)(uintptr_t)m->a, m->b, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, pool_fd,
+                 (off_t)m->c) == MAP_FAILED)
+            fprintf(stderr, "ps4mac_service: map %#llx+%#llx failed: %s\n", (unsigned long long)m->a,
+                    (unsigned long long)m->b, strerror(errno));
+        ++maps;
+        break;
+    case PS4MAC_MEMORY_UNMAP:
+        mmap((void *)(uintptr_t)m->a, m->b, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED, -1, 0);
+        ++unmaps;
+        break;
+    case PS4MAC_CHECKSUM: {
+        const Ps4macMessage reply = {.kind = PS4MAC_CHECKSUM_REPLY, .a = m->a, .b = m->b, .c = m->c,
+                                     .d = ps4mac_hash((const void *)(uintptr_t)m->a, m->b)};
+        ps4mac_ring_push(&block->to_guest, &reply, 1000000000ull);
+        ++checks;
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+static void *socket_watch(void *arg) {
+    /* The guest side never writes again: EOF means it is gone. */
+    char byte;
+    while (read((int)(intptr_t)arg, &byte, 1) > 0) { }
+    fprintf(stderr, "ps4mac_service: guest side gone (%llu maps, %llu unmaps, %llu checksums); exiting\n",
+            maps, unmaps, checks);
+    _exit(0);
+    return NULL;
+}
+
+int main(int argc, char **argv) {
+    int socket_fd = -1;
+    for (int i = 1; i + 1 < argc; ++i)
+        if (!strcmp(argv[i], "--socket")) socket_fd = atoi(argv[i + 1]);
+    if (socket_fd < 0) {
+        fprintf(stderr, "usage: %s --socket <fd> (started by the ps4mac_port runtime)\n", argv[0]);
+        return 2;
+    }
+    receive_objects(socket_fd);
+    map_guest_memory();
+    atomic_store(&block->service_alive, 1);
+    if (write(socket_fd, "R", 1) != 1) fail("ready");
+    pthread_t watcher;
+    pthread_create(&watcher, NULL, socket_watch, (void *)(intptr_t)socket_fd);
+    for (;;) {
+        Ps4macMessage m;
+        /* Poll 2 ms after the last message, then sleep (step 3.0). */
+        if (ps4mac_ring_pop(&block->to_graphics, &m, 2000000ull, 1000000000ull)) handle(&m);
+    }
+}

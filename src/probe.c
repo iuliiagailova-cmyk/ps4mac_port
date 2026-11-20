@@ -917,6 +917,9 @@ int main(int argc, char **argv) {
     runtime_memory_reserve();
     runtime_thread_tcb_offset();
 #endif
+#ifdef __APPLE__
+    runtime_bridge_start(); /* ps4mac_port: the graphics service, when PS4MAC_SERVICE names it */
+#endif
     int cpu_only = 0, strict_imports = 0, check_imports = 0;
     unsigned timeout_seconds = 10;
     const char *content_profile=NULL, *app0=NULL, *user_dir=NULL, *patch_file=NULL, *isa_file=NULL, *pause_menu=NULL;
