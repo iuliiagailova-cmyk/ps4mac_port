@@ -2920,11 +2920,19 @@ int PS4_SYSV_ABI Func_F916890425496553() {
     return ORBIS_OK;
 }
 
-void RegisterLib(Core::Loader::SymbolsResolver* sym) {
+/// ps4mac_port: the video core (Liverpool, presenter) in this process: the single-process build
+/// and the graphics service (spartanportgpu_service_init); not a remote guest.
+void CreateVideoCore() {
     LOG_INFO(Lib_GnmDriver, "Initializing presenter");
     liverpool = std::make_unique<AmdGpu::Liverpool>();
     Ps4mac::Gfx::Attach(liverpool.get());
     presenter = std::make_unique<Vulkan::Presenter>(*g_window, liverpool.get());
+}
+
+void RegisterLib(Core::Loader::SymbolsResolver* sym) {
+    if (!Ps4mac::Gfx::Remote()) {
+        CreateVideoCore();
+    }
 
     const s32 result = sceKernelGetCompiledSdkVersion(&sdk_version);
     if (result != ORBIS_OK) {

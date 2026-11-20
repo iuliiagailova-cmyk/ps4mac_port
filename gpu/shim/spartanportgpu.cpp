@@ -22,6 +22,9 @@
 #include <vector>
 #include <SDL3/SDL.h>
 #include "../spartanportgpu.h"
+#include "../../bridge/ps4mac_bridge.h"
+#include "ps4mac_graphics.h"
+#include "core/emulator_settings.h"
 #include "common/elf_info.h"
 #include "common/logging/log.h"
 #include "core/libraries/kernel/orbis_error.h"
@@ -190,6 +193,7 @@ std::condition_variable g_window_cv;
 bool g_window_ready;
 #ifdef __APPLE__
 bool g_window_wanted;
+bool g_remote_main_loop; // ps4mac_port: the service has the window (set by spartanportgpu_init)
 std::string g_window_title;
 s32 g_window_width, g_window_height;
 #endif
@@ -215,6 +219,27 @@ s32 g_window_width, g_window_height;
 
 #ifdef __APPLE__
 extern "C" void spartanportgpu_main_loop(void) {
+    // The main thread gets here early: wait until spartanportgpu_init says what it runs.
+    {
+        std::unique_lock lock{g_window_mutex};
+        g_window_cv.wait(lock, [] { return g_window_wanted || g_remote_main_loop; });
+    }
+    if (g_remote_main_loop) {
+        // ps4mac_port step 3.3c: the window is the service's. SDL events are still pumped here
+        // (gamepads), and a quit request (SIGTERM, SIGINT) ends the game as closing the window does.
+        for (;;) {
+            SDL_Event event;
+            while (SDL_PollEvent(&event)) {
+                if (event.type == SDL_EVENT_QUIT) {
+                    LOG_INFO(Frontend, "Quit requested");
+                    runtime_report();
+                    std::fflush(stdout);
+                    std::_Exit(0);
+                }
+            }
+            SDL_Delay(2);
+        }
+    }
     std::string title;
     s32 width, height;
     {
@@ -269,6 +294,23 @@ extern "C" int spartanportgpu_init(const SpartanGpuConfig* config) {
     if (config->user_dir) setenv("SPARTAN_GPU_USER_DIR", config->user_dir, 0);
 #endif
     Core::Emulator::FillElfInfo(*config);
+    if (Ps4mac::Gfx::Remote()) {
+        // ps4mac_port step 3.3c: the graphics service has the window and the video core; this
+        // process keeps GnmDriver (command buffers), VideoOut (port, flips, events) and equeue.
+        Ps4mac::Gfx::StartRemote();
+        std::printf("GPU: the graphics service renders (Ps4mac::Gfx over the bridge)\n");
+#ifdef __APPLE__
+        {
+            std::scoped_lock lock{g_window_mutex};
+            g_remote_main_loop = true;
+        }
+        g_window_cv.notify_all();
+#endif
+        Core::Loader::SymbolsResolver resolver;
+        Libraries::GnmDriver::RegisterLib(&resolver);
+        Libraries::VideoOut::RegisterLib(&resolver);
+        return 0;
+    }
     // The window carries the project name (SPARTAN_APP_NAME, set by run.py); the dump's own title
     // stays in ElfInfo (above).
     const char* app_name = std::getenv("SPARTAN_APP_NAME");
@@ -300,6 +342,40 @@ extern "C" int spartanportgpu_init(const SpartanGpuConfig* config) {
     Libraries::VideoOut::RegisterLib(&resolver);
     return 0;
 }
+
+namespace Libraries::GnmDriver { void CreateVideoCore(); }
+extern "C" void ps4mac_gfx_server_start(void (*reply)(const Ps4macMessage*));
+
+#ifdef __APPLE__
+// ps4mac_port step 3.3c: the graphics service's start: settings, window and video core only (no
+// HLE libraries: GnmDriver and VideoOut stay with the guest). `reply` sends to the guest.
+extern "C" int spartanportgpu_service_init(const SpartanGpuConfig* config,
+                                           void (*reply)(const Ps4macMessage*)) {
+    SpartanSettings::Load();
+    g_sdk_version = config->sdk_version;
+    Core::Emulator::FillElfInfo(*config);
+    const char* app_name = std::getenv("SPARTAN_APP_NAME");
+    const std::string title = app_name && *app_name ? app_name : "SpartanPort";
+    {
+        std::scoped_lock lock{g_window_mutex};
+        g_window_title = title;
+        g_window_width = config->width;
+        g_window_height = config->height;
+        g_window_wanted = true;
+    }
+    g_window_cv.notify_all();
+    {
+        std::unique_lock lock{g_window_mutex};
+        g_window_cv.wait(lock, [] { return g_window_ready; });
+    }
+    Libraries::GnmDriver::CreateVideoCore();
+    if (EmulatorSettings.IsCopyGpuBuffers()) {
+        Ps4mac::Gfx::ReserveCopyBufferSpace();
+    }
+    ps4mac_gfx_server_start(reply);
+    return 0;
+}
+#endif
 
 namespace Libraries::Kernel { void StartKernelService(); }
 extern "C" void spartanportgpu_register_kernel(void) {

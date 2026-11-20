@@ -49,6 +49,11 @@ typedef struct {
     _Atomic uint32_t guest_alive, service_alive;
     uint64_t clock_start_ns; /* the guest's process clock origin (CLOCK_MONOTONIC, ns) */
     Ps4macGpuConfig gpu_config;
+    /* Step 3.3c: the guest's VideoOutPort lives in shared memory and the video core reads it, so
+     * both builds must lay it out alike (checked by the service). */
+    uint32_t vo_port_size, vo_labels_offset, vo_groups_offset, vo_slots_offset;
+    _Atomic uint32_t gfx_ready;     /* the service's video core is up (it answers Ps4mac::Gfx) */
+    uint32_t gfx_hdr_supported;
     Ps4macSharedRing to_graphics;
     Ps4macSharedRing to_guest;
 } Ps4macSharedBlock;

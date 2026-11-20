@@ -92,6 +92,16 @@ void runtime_bridge_start(void); /* runtime_bridge.c: starts the service when PS
  * start the video core. Returns 0 when there is no service. */
 int runtime_bridge_gpu_init(const char *title, const char *serial, const char *user_dir, uint32_t sdk_version,
                             uint32_t psf_attributes, int32_t width, int32_t height);
+/* Step 3.3c, for the GPU library's Ps4mac::Gfx client: whether the service renders, the ring,
+ * the handler of messages from the service (on the bridge's reply thread), the shared block, and
+ * whether a range is memory the service maps too. */
+struct Ps4macMessage;
+int runtime_bridge_remote_graphics(void);
+void runtime_bridge_send(const struct Ps4macMessage *m);
+void runtime_bridge_set_handler(void (*handler)(const struct Ps4macMessage *));
+void runtime_bridge_set_vo_layout(uint32_t size, uint32_t labels, uint32_t groups, uint32_t slots);
+int runtime_bridge_wait_graphics(void);
+int runtime_bridge_is_shared(uintptr_t address, uint64_t size);
 uint64_t runtime_process_start_ns(void); /* runtime_kernel.c: the process clock origin, CLOCK_MONOTONIC */
 /* Windows and macOS: reserves the PS4 user address range (no-op on Linux). */
 void runtime_memory_reserve(void);

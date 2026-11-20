@@ -91,6 +91,36 @@ static void *check_thread(void *unused) {
     return NULL;
 }
 
+static void (*message_handler)(const Ps4macMessage *);
+static int remote_graphics;
+
+/* For the GPU library's Ps4mac::Gfx client (gpu/shim/ps4mac_graphics.cpp). */
+int runtime_bridge_remote_graphics(void) { return remote_graphics; }
+void runtime_bridge_send(const Ps4macMessage *m) { send_message(m); }
+void runtime_bridge_set_handler(void (*handler)(const Ps4macMessage *)) { message_handler = handler; }
+/* The guest's VideoOutPort layout, for the service's check (both builds must agree). */
+void runtime_bridge_set_vo_layout(uint32_t size, uint32_t labels, uint32_t groups, uint32_t slots) {
+    block->vo_port_size = size;
+    block->vo_labels_offset = labels;
+    block->vo_groups_offset = groups;
+    block->vo_slots_offset = slots;
+}
+/* Waits until the service's video core answers; returns whether HDR output is supported. */
+int runtime_bridge_wait_graphics(void) {
+    while (!atomic_load(&block->gfx_ready)) {
+        if (!atomic_load(&block->service_alive)) {
+            fputs("STOP: the graphics service ended before its video core started\n", stderr);
+            exit(21);
+        }
+        usleep(1000);
+    }
+    return (int)block->gfx_hdr_supported;
+}
+/* Memory the service maps too: the PS4 range (pool) and low memory. */
+int runtime_bridge_is_shared(uintptr_t address, uint64_t size) {
+    return block && address >= block->user_min && address + size <= block->user_max;
+}
+
 static void *reply_thread(void *unused) {
     (void)unused;
     unsigned ok = 0, bad = 0;
@@ -101,7 +131,11 @@ static void *reply_thread(void *unused) {
             if (!atomic_load(&block->service_alive)) return NULL;
             continue;
         }
-        if (m.kind == PS4MAC_CHECKSUM_REPLY) {
+        if (m.kind != PS4MAC_CHECKSUM_REPLY) {
+            if (message_handler) message_handler(&m);
+            continue;
+        }
+        {
             if (m.c == m.d) ++ok;
             else {
                 ++bad;
@@ -240,6 +274,10 @@ void runtime_bridge_start(void) {
     pthread_detach(thread);
     pthread_create(&thread, NULL, reply_thread, NULL);
     pthread_detach(thread);
+    /* Step 3.3c: the service renders (the guest's Ps4mac::Gfx sends to it) unless
+     * PS4MAC_SERVICE_VIDEO=0 (the guest renders, the service only maps memory: step 3.2). */
+    const char *video = getenv("PS4MAC_SERVICE_VIDEO");
+    remote_graphics = !(video && *video == '0');
     const char *check = getenv("PS4MAC_BRIDGE_CHECK");
     if (check && *check == '1') {
         pthread_create(&thread, NULL, check_thread, NULL);
@@ -248,6 +286,7 @@ void runtime_bridge_start(void) {
 }
 #else
 void runtime_bridge_start(void) {}
+int runtime_bridge_remote_graphics(void) { return 0; }
 int runtime_bridge_gpu_init(const char *title, const char *serial, const char *user_dir, uint32_t sdk_version,
                             uint32_t psf_attributes, int32_t width, int32_t height) {
     (void)title; (void)serial; (void)user_dir; (void)sdk_version; (void)psf_attributes; (void)width; (void)height;

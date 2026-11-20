@@ -1159,8 +1159,8 @@ int main(int argc, char **argv) {
         if (procparam) memcpy(&sdk,image+procparam+16,8); /* procparam: size, magic, count, sdk_version */
         SpartanGpuConfig gpu={title,serial,user_dir ? user_dir : "user",(uint32_t)sdk,attributes,1920,1080};
         gpu_enabled=1; /* page tracking starts while the rasterizer registers guest memory */
-        /* ps4mac_port: the graphics service gets the same settings (step 3.3b: its video core starts
-         * only with PS4MAC_SERVICE_VIDEO=1, beside this one). */
+        /* ps4mac_port: the graphics service gets the same settings and starts its video core;
+         * spartanportgpu_init then sends Ps4mac::Gfx calls to it (step 3.3c). */
         runtime_bridge_gpu_init(gpu.title,gpu.serial,gpu.user_dir,gpu.sdk_version,gpu.psf_attributes,gpu.width,gpu.height);
         if (spartanportgpu_init(&gpu)) fail("GPU initialization failed");
         printf("GPU: window and Vulkan presenter ready; SDK 0x%08x, %u HLE symbols\n",(unsigned)sdk,spartanportgpu_symbol_count());

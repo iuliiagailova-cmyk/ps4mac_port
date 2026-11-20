@@ -7,9 +7,10 @@
  * messages, which also keep the service's mapping table, service_runtime.c). Answers checksum
  * requests. Exits when the guest side goes away (socket closed).
  *
- * Step 3.3b: the video core (libspartanportgpu, arm64) is linked in. With PS4MAC_SERVICE_VIDEO=1
- * it starts on PS4MAC_GPU_INIT, beside the guest's own (window, Vulkan on KosmicKrisp, guest
- * mappings registered); submissions come to it in step 3.3c.
+ * The video core (libspartanportgpu, arm64) is linked in and starts on PS4MAC_GPU_INIT (window,
+ * Vulkan on KosmicKrisp); the guest's Ps4mac::Gfx calls arrive on the ring and are answered by
+ * gpu/shim/ps4mac_graphics_server.cpp (step 3.3c). PS4MAC_SERVICE_VIDEO=0: no video core here
+ * (the guest renders itself; step 3.2).
  */
 #include <errno.h>
 #include <pthread.h>
@@ -30,6 +31,21 @@ static unsigned long long maps, unmaps, protects, checks;
 static pthread_mutex_t gpu_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t gpu_cond = PTHREAD_COND_INITIALIZER;
 static int gpu_requested;
+static _Atomic int gfx_ready;
+static pthread_mutex_t to_guest_lock = PTHREAD_MUTEX_INITIALIZER; /* the ring has one producer */
+
+int spartanportgpu_service_init(const SpartanGpuConfig *config, void (*reply)(const Ps4macMessage *));
+int ps4mac_gfx_server_handle(const Ps4macMessage *m);
+int ps4mac_gfx_server_check_port(uint32_t size, uint32_t labels, uint32_t groups, uint32_t slots);
+int ps4mac_gfx_server_hdr_supported(void);
+
+/* From any thread: replies (ring thread), interrupts (graphics thread), presents (present thread). */
+static void push_to_guest(const Ps4macMessage *m) {
+    pthread_mutex_lock(&to_guest_lock);
+    if (ps4mac_ring_push(&block->to_guest, m, 2000000000ull))
+        fputs("ps4mac_service: the guest does not take messages\n", stderr);
+    pthread_mutex_unlock(&to_guest_lock);
+}
 
 static void fail(const char *what) {
     fprintf(stderr, "ps4mac_service: %s: %s\n", what, strerror(errno));
@@ -108,11 +124,29 @@ static void handle(const Ps4macMessage *m) {
     case PS4MAC_CHECKSUM: {
         const Ps4macMessage reply = {.kind = PS4MAC_CHECKSUM_REPLY, .a = m->a, .b = m->b, .c = m->c,
                                      .d = ps4mac_hash((const void *)(uintptr_t)m->a, m->b)};
-        ps4mac_ring_push(&block->to_guest, &reply, 1000000000ull);
+        push_to_guest(&reply);
         ++checks;
         break;
     }
+    case PS4MAC_GFX_SET_VO_PORT:
+        if (!ps4mac_gfx_server_check_port(block->vo_port_size, block->vo_labels_offset,
+                                          block->vo_groups_offset, block->vo_slots_offset)) {
+            fputs("ps4mac_service: the guest's and the service's builds disagree; exiting\n", stderr);
+            _exit(1);
+        }
+        ps4mac_gfx_server_handle(m);
+        break;
     default:
+        if (m->kind == PS4MAC_SUBMIT_DONE) {
+            static int invalidate_all = -1;
+            if (invalidate_all < 0) {
+                const char *e = getenv("PS4MAC_SERVICE_INVALIDATE_ALL");
+                invalidate_all = e && *e == '1';
+            }
+            if (invalidate_all) service_invalidate_all();
+        }
+        if (atomic_load(&gfx_ready) && !ps4mac_gfx_server_handle(m))
+            fprintf(stderr, "ps4mac_service: unknown message %u\n", m->kind);
         break;
     }
 }
@@ -146,10 +180,13 @@ static void *gpu_init_thread(void *unused) {
     const SpartanGpuConfig config = {c->title, c->serial, c->user_dir, c->sdk_version, c->psf_attributes,
                                      c->width, c->height};
     const uint64_t start = ps4mac_now_ns();
-    if (spartanportgpu_init(&config)) {
+    if (spartanportgpu_service_init(&config, push_to_guest)) {
         fputs("ps4mac_service: video core initialization failed\n", stderr);
         _exit(1);
     }
+    block->gfx_hdr_supported = (uint32_t)ps4mac_gfx_server_hdr_supported();
+    atomic_store(&gfx_ready, 1);
+    atomic_store(&block->gfx_ready, 1); /* the guest's Ps4mac::Gfx starts sending */
     fprintf(stderr, "ps4mac_service: video core ready in %.0f ms (%s, %zu guest ranges registered)\n",
             (ps4mac_now_ns() - start) / 1e6, c->serial, service_memory_range_count());
     return NULL;
@@ -163,6 +200,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "usage: %s --socket <fd> (started by the ps4mac_port runtime)\n", argv[0]);
         return 2;
     }
+    setvbuf(stdout, NULL, _IOLBF, 0); /* the guest's log is a pipe: lines, not blocks */
     receive_objects(socket_fd);
     map_guest_memory();
     service_set_clock_start(block->clock_start_ns);
@@ -174,7 +212,7 @@ int main(int argc, char **argv) {
     pthread_t ring;
     pthread_create(&ring, NULL, ring_loop, NULL);
     const char *video = getenv("PS4MAC_SERVICE_VIDEO");
-    if (!video || *video != '1') {
+    if (video && *video == '0') {
         pthread_join(ring, NULL);
         return 0;
     }

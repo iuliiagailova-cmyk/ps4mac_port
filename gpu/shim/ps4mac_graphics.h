@@ -18,6 +18,14 @@ struct VideoOutPort;
 
 namespace Ps4mac::Gfx {
 
+/// The graphics service renders (step 3.3c): calls go over the bridge; this process has no
+/// video core, presenter or window.
+bool Remote();
+/// Remote: receives the service's messages and waits until its video core answers.
+void StartRemote();
+/// This process is the graphics service, answering a remote guest (ps4mac_graphics_server.cpp).
+bool IsServer();
+
 /// The video core this process talks to (set when GnmDriver creates it).
 void Attach(AmdGpu::Liverpool* liverpool);
 

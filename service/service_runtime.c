@@ -244,3 +244,29 @@ void service_install_fault_handler(void) {
     sigaction(SIGSEGV, &sa, NULL);
     sigaction(SIGBUS, &sa, NULL);
 }
+
+/* The guest's bridge API (src/runtime_bridge.c) that the shared GPU library also references: in
+ * the service the library is never a remote guest. */
+struct Ps4macMessage;
+int runtime_bridge_remote_graphics(void) { return 0; }
+void runtime_bridge_send(const struct Ps4macMessage *m) { (void)m; }
+void runtime_bridge_set_handler(void (*handler)(const struct Ps4macMessage *)) { (void)handler; }
+int runtime_bridge_is_shared(uintptr_t address, uint64_t size) { (void)address; (void)size; return 0; }
+int runtime_bridge_wait_graphics(void) { return 0; }
+void runtime_bridge_set_vo_layout(uint32_t size, uint32_t labels, uint32_t groups, uint32_t slots) {
+    (void)size; (void)labels; (void)groups; (void)slots;
+}
+void *runtime_low_map(size_t size, int prot) { (void)size; (void)prot; return NULL; }
+
+/* Diagnostic (PS4MAC_SERVICE_INVALIDATE_ALL=1): every guest range counts as written, as if page
+ * tracking had reported everything. Slow; until step 3.4 it shows what tracking will fix. */
+void service_invalidate_all(void) {
+    if (!hook_invalidate) return;
+    pthread_rwlock_rdlock(&table_lock);
+    const size_t n = range_count;
+    Range *copy = malloc((n ? n : 1) * sizeof(Range));
+    memcpy(copy, ranges, n * sizeof(Range));
+    pthread_rwlock_unlock(&table_lock);
+    for (size_t i = 0; i < n; ++i) hook_invalidate(copy[i].start, copy[i].end - copy[i].start);
+    free(copy);
+}

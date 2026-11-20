@@ -82,6 +82,13 @@ public:
     VideoOutDriver(u32 width, u32 height);
     ~VideoOutDriver();
 
+    /// ps4mac_port: with the graphics service rendering, the driver (and so its port: labels,
+    /// buffer groups) lives in memory the service maps at the same address.
+    static void* operator new(size_t size);
+    static void operator delete(void* pointer);
+    /// The port's layout, for the service's check (see ps4mac_gfx_server_check_port).
+    void ReportPortLayout();
+
     int Open(const ServiceThreadParams* params);
     void Close(s32 handle);
 

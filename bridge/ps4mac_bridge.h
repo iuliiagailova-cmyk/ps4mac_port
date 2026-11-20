@@ -17,34 +17,49 @@
 extern "C" {
 #endif
 
-#define PS4MAC_BRIDGE_VERSION 2u
+#define PS4MAC_BRIDGE_VERSION 3u
 
 /* Guest -> graphics, in order (submissions and memory changes share one ring: a submission
- * must see the mappings made before it). */
+ * must see the mappings made before it). Messages with PS4MAC_FLAG_REPLY get a PS4MAC_REPLY
+ * with the same sequence. Addresses are guest addresses (memory both processes map). */
 enum Ps4macToGraphics {
-    PS4MAC_SUBMIT_GFX = 1,       /* dcb/ccb command buffers (one pair) */
-    PS4MAC_SUBMIT_COMPUTE,       /* acb span of a mapped compute queue */
+    PS4MAC_SUBMIT_GFX = 1,       /* a dcb, b dcb dwords, c ccb, d ccb dwords */
+    PS4MAC_SUBMIT_COMPUTE,       /* a acb, b acb dwords, c vqid */
     PS4MAC_SUBMIT_DONE,          /* sceGnmSubmitDone: the frame's submissions are complete */
-    PS4MAC_MAP_COMPUTE_QUEUE,    /* ring base, read pointer address, size, pipe -> vqid */
-    PS4MAC_UNMAP_COMPUTE_QUEUE,
-    PS4MAC_FLIP,                 /* VideoOut: show a registered buffer */
+    PS4MAC_MAP_COMPUTE_QUEUE,    /* a ring base, b read pointer address, c size dw, d pipe -> reply a vqid */
+    PS4MAC_UNMAP_COMPUTE_QUEUE,  /* a vqid */
+    PS4MAC_FLIP,                 /* (unused) */
     PS4MAC_MEMORY_MAP,           /* guest mapping appeared: a address, b size, c pool offset, d host prot */
     PS4MAC_MEMORY_UNMAP,         /* a address, b size */
     PS4MAC_MEMORY_INVALIDATE,    /* guest wrote memory without a fault (e.g. file reads) */
-    PS4MAC_WRITE_FAULT,          /* guest wrote a protected page: graphics answers PS4MAC_FAULT_DONE */
+    PS4MAC_WRITE_FAULT,          /* step 3.4: guest wrote a protected page */
     PS4MAC_READ_FAULT,
     PS4MAC_MEMORY_PROTECT,       /* the guest changed protection: a address, b size, d host prot */
     PS4MAC_GPU_INIT,             /* the video core may start: configuration in the shared block */
+    /* Ps4mac::Gfx (gpu/shim/ps4mac_graphics.h), step 3.3c: */
+    PS4MAC_GFX_IS_IDLE,          /* reply a: no submission queued or in flight */
+    PS4MAC_GFX_RESERVE_COPY,
+    PS4MAC_GFX_RUN_TASK,         /* reply once the graphics thread reaches it (RunOnGraphicsThread) */
+    PS4MAC_GFX_SET_VO_PORT,      /* a VideoOutPort (in shared memory) */
+    PS4MAC_GFX_REGISTER_BUFFER,  /* a BufferAttributeGroup (in the shared port), b display buffer address */
+    PS4MAC_GFX_PREPARE_FLIP,     /* a group, b address, c frame id: on the graphics thread */
+    PS4MAC_GFX_PREPARE_BLANK,    /* a present_thread, c frame id */
+    PS4MAC_GFX_PREPARE_LAST,     /* c frame id (may prepare nothing) */
+    PS4MAC_GFX_PRESENT,          /* a frame id, b reusing | game << 1, c hdr + 1 or 0; reply when shown */
+    PS4MAC_GFX_SET_GAMMA,        /* a float bits */
 };
 
 /* Graphics -> guest. */
 enum Ps4macToGuest {
-    PS4MAC_IRQ = 1,              /* end of pipe / flip / GPU idle: delivered through equeue */
-    PS4MAC_PROTECT,              /* track CPU writes (and reads) of a range: guest runs mprotect */
-    PS4MAC_FAULT_DONE,           /* the faulting access may proceed */
-    PS4MAC_FLIP_DONE,
-    PS4MAC_QUEUE_MAPPED,         /* reply to PS4MAC_MAP_COMPUTE_QUEUE */
+    PS4MAC_IRQ = 1,              /* a Platform::InterruptId: signalled to the guest's IrqC (equeue) */
+    PS4MAC_PROTECT,              /* step 3.4: track CPU writes (and reads) of a range */
+    PS4MAC_FAULT_DONE,           /* step 3.4 */
+    PS4MAC_FLIP_DONE,            /* (unused) */
+    PS4MAC_QUEUE_MAPPED,         /* (unused: PS4MAC_REPLY) */
+    PS4MAC_REPLY,                /* sequence of the request, a value */
 };
+
+#define PS4MAC_FLAG_REPLY 1u
 
 typedef struct Ps4macMessage {
     uint32_t kind;     /* Ps4macToGraphics or Ps4macToGuest */
@@ -53,7 +68,8 @@ typedef struct Ps4macMessage {
     uint64_t a, b, c, d; /* per kind: addresses, sizes, ids (documented at each use) */
 } Ps4macMessage;
 
-/* Single-producer single-consumer ring in shared memory. */
+#ifndef __cplusplus
+/* Single-producer single-consumer ring in shared memory (the one in use: ps4mac_ring.h). */
 typedef struct Ps4macRing {
     _Alignas(64) uint64_t head; /* written by the producer */
     _Alignas(64) uint64_t tail; /* written by the consumer */
@@ -61,6 +77,7 @@ typedef struct Ps4macRing {
     uint32_t reserved;
     /* Ps4macMessage slots[capacity] follow */
 } Ps4macRing;
+#endif
 
 /* Channels that already are narrow C seams in one process; the two-process build implements
  * each with the messages above (src/runtime.h, gpu/shim/spartanportgpu.cpp):

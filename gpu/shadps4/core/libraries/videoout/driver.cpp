@@ -794,3 +794,35 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
 }
 
 } // namespace Libraries::VideoOut
+
+// ps4mac_port: see driver.h.
+extern "C" void* runtime_low_map(size_t size, int prot);
+extern "C" void runtime_bridge_set_vo_layout(uint32_t size, uint32_t labels, uint32_t groups, uint32_t slots);
+
+namespace Libraries::VideoOut {
+
+void* VideoOutDriver::operator new(size_t size) {
+    if (Ps4mac::Gfx::Remote()) {
+        void* pointer = runtime_low_map(size, 3 /* read | write */);
+        ASSERT_MSG(pointer, "no shared memory for the VideoOut driver");
+        return pointer;
+    }
+    return ::operator new(size);
+}
+
+void VideoOutDriver::operator delete(void* pointer) {
+    if (!Ps4mac::Gfx::Remote()) {
+        ::operator delete(pointer);
+    }
+}
+
+void VideoOutDriver::ReportPortLayout() {
+    const auto* base = reinterpret_cast<const unsigned char*>(&main_port);
+    const auto offset = [&](const void* field) {
+        return uint32_t(static_cast<const unsigned char*>(field) - base);
+    };
+    runtime_bridge_set_vo_layout(uint32_t(sizeof(main_port)), offset(&main_port.buffer_labels),
+                                 offset(&main_port.groups), offset(&main_port.buffer_slots));
+}
+
+} // namespace Libraries::VideoOut

@@ -1,11 +1,13 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "ps4mac_graphics.h"
 #include "spartanport_trace.h"
 #include <array>
 #include <mutex>
 #include <atomic>
 #include <chrono>
+#include <thread>
 #include <pthread.h>
 #ifndef _WIN32
 #include <sys/resource.h>
@@ -1342,7 +1344,15 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                     if (rasterizer) {
                         rasterizer->DrainDrawPipe(static_cast<u32>(opcode));
                     }
-                    vo_port->WaitVoLabel([&] { return wait_reg_mem->Test(regs.reg_array); });
+                    if (Ps4mac::Gfx::IsServer()) {
+                        // ps4mac_port: the port is the guest's (shared memory); its mutex and
+                        // condition variable belong to the guest process. The label is polled.
+                        while (!wait_reg_mem->Test(regs.reg_array)) {
+                            std::this_thread::sleep_for(std::chrono::microseconds(50));
+                        }
+                    } else {
+                        vo_port->WaitVoLabel([&] { return wait_reg_mem->Test(regs.reg_array); });
+                    }
                     break;
                 }
                 // spartanport: a fence handed to the draw recording thread counts as written: that
