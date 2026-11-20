@@ -135,6 +135,8 @@ void runtime_bridge_start(void) {
 
     int sockets[2];
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets)) { perror("socketpair"); exit(21); }
+    /* Only the service's end goes to it (dup2 to fd 3): with ours too it would never see EOF. */
+    fcntl(sockets[0], F_SETFD, FD_CLOEXEC);
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
     posix_spawn_file_actions_adddup2(&actions, sockets[1], 3);

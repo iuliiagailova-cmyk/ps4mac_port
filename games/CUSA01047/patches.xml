@@ -6,7 +6,8 @@
      PRT area 0x1000000000-0xfc00000000) and maps memory there with sceKernelMapDirectMemory, the
      address passed as a hint it relies on. macOS reserves 0xfc0000000-0x7000000000 in every
      process (mmap/mach_vm_allocate fixed there: KERN_NO_SPACE, also under Rosetta 2), so the base
-     moves to 0x8000000000 and the slots to 248 (0x8000000000-0xfc00000000, 40-bit GPU addresses).
+     moves to 0x8000000000 and the slots to 200 (0x8000000000-0xe400000000: ps4mac_port keeps
+     0xe4-0xfc00000000 for the runtime and low memory, the window an arm64 graphics service shares).
      Patched: the 4 movabs of the base (slot to address), the 3 movabs of 2^63 - base (address to
      slot) and the 4 slot counts. The other 59 uses of 0x1000000000 in the eboot are feature flag
      masks (bit 36) and are left alone. -->
@@ -23,10 +24,10 @@
             <Line Type="bytes" Address="0x012bdac8" Value="00000080ffffff7f"/>
             <Line Type="bytes" Address="0x012bdb30" Value="00000080ffffff7f"/>
             <Line Type="bytes" Address="0x012bdfe9" Value="00000080ffffff7f"/>
-            <Line Type="bytes" Address="0x012bda0b" Value="f8000000"/>
-            <Line Type="bytes" Address="0x012bda64" Value="f8000000"/>
-            <Line Type="bytes" Address="0x012bddd1" Value="f8000000"/>
-            <Line Type="bytes" Address="0x012bde8b" Value="f8000000"/>
+            <Line Type="bytes" Address="0x012bda0b" Value="c8000000"/>
+            <Line Type="bytes" Address="0x012bda64" Value="c8000000"/>
+            <Line Type="bytes" Address="0x012bddd1" Value="c8000000"/>
+            <Line Type="bytes" Address="0x012bde8b" Value="c8000000"/>
         </PatchList>
     </Metadata>
 </Patch>

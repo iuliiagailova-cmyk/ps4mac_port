@@ -85,6 +85,7 @@ typedef void (*RuntimeMappingObserver)(uintptr_t address, uint64_t size, int kin
 void runtime_memory_share(int *pool_fd, uint64_t *pool_size, int *low_fd, uint64_t *low_base,
                           uint64_t *low_size, uint64_t *user_min, uint64_t *user_max);
 void runtime_memory_set_mapping_observer(RuntimeMappingObserver observer);
+int runtime_memory_is_shared_low(uintptr_t address, uint64_t size);
 void runtime_bridge_start(void); /* runtime_bridge.c: starts the service when PS4MAC_SERVICE is set */
 /* Windows and macOS: reserves the PS4 user address range (no-op on Linux). */
 void runtime_memory_reserve(void);

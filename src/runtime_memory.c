@@ -42,11 +42,24 @@ static uint64_t pool_size_bytes(void) {
 #define FLEXIBLE_SIZE (UINT64_C(448) * 1024 * 1024)
 #define PAGE UINT64_C(16384)
 #ifdef __APPLE__
-#define USER_MIN UINT64_C(0x7000000000)
+/* ps4mac_port, with the graphics service (PS4MAC_SERVICE): guest memory must sit at addresses that
+ * are free in the native arm64 service too, i.e. in 0x80_0000_0000-0xFC_0000_0000 (an arm64
+ * process has the shared cache below 0xF_C000_0000 and malloc regions in 0x70-0x80_0000_0000;
+ * docs/architecture.md 3.2). There: the game's allocator from 0x80 (its profile keeps it below
+ * 0xE4), the runtime's own placements in 0xE4-0xF4, low memory in 0xF4-0xFC. */
+static int service_layout(void) {
+    static int on=-1;
+    if (on<0) on=getenv("PS4MAC_SERVICE") && *getenv("PS4MAC_SERVICE");
+    return on;
+}
+#define USER_MIN (service_layout() ? UINT64_C(0x8000000000) : UINT64_C(0x7000000000))
+#define USER_MAX (service_layout() ? UINT64_C(0xf400000000) : UINT64_C(0xfc00000000))
+#define RUNTIME_BASE (service_layout() ? UINT64_C(0xe400000000) : USER_MIN)
 #else
 #define USER_MIN UINT64_C(0x1000000000)
-#endif
 #define USER_MAX UINT64_C(0xfc00000000)
+#define RUNTIME_BASE USER_MIN
+#endif
 #define LIMIT 4096
 #define INVALID ((int32_t)UINT32_C(0x80020016))
 #define NO_MEMORY ((int32_t)UINT32_C(0x8002000c))
@@ -274,11 +287,7 @@ static int pool(void) {
  * offset `phys`, kind 1 = low object at offset address - LOW_MIN, kind 2 = gone. */
 static RuntimeMappingObserver mapping_observer;
 static int low_fd=-1;
-static int share_low(void) {
-    static int share=-1;
-    if (share<0) share=getenv("PS4MAC_SERVICE") && *getenv("PS4MAC_SERVICE");
-    return share;
-}
+static int share_low(void) { return service_layout(); }
 #endif
 #ifdef __APPLE__
 /* The user range is reserved at start (probe.c), before Metal and the system allocator can place
@@ -408,7 +417,7 @@ static int overlaps(uintptr_t start, uintptr_t end, int ignore_reserved) {
 }
 /* First-fit search in the PS4 user range, starting from the hint. */
 static uintptr_t find_free(uintptr_t hint, uint64_t size, uint64_t alignment) {
-    uintptr_t at=align_up(hint<USER_MIN ? USER_MIN : hint, alignment);
+    uintptr_t at=align_up(!hint ? RUNTIME_BASE : hint<USER_MIN ? USER_MIN : hint, alignment);
     for (size_t i=vma_index(at); at+size<=USER_MAX; ++i) {
         if (i==vma_count || vmas[i].start>=at+size) return at;
         at=align_up(vmas[i].end,alignment);
@@ -731,13 +740,14 @@ uintptr_t runtime_memory_resolve(const char *name) {
 }
 /* Host-owned memory the guest can see (image, stacks, trampolines) lives in
  * [LOW_MIN, USER_MIN): PS4 code packs pointers into 40-bit fields. */
-#define LOW_MIN UINT64_C(0x0800000000)
 #ifdef __APPLE__
-#define LOW_MAX SPARTAN_LOW_HEAP_MIN /* the runtime's heap (compat_mac.c) follows */
+#define LOW_MIN (service_layout() ? UINT64_C(0xf400000000) : UINT64_C(0x0800000000))
+#define LOW_MAX (service_layout() ? UINT64_C(0xfc00000000) : SPARTAN_LOW_HEAP_MIN) /* the runtime's heap (compat_mac.c) follows */
 #else
+#define LOW_MIN UINT64_C(0x0800000000)
 #define LOW_MAX USER_MIN
 #endif
-static uintptr_t low_next=LOW_MIN;
+static uintptr_t low_next;
 #ifdef __APPLE__
 static void low_create(void) {
     if (!share_low() || low_fd>=0) return;
@@ -754,6 +764,7 @@ static void low_create(void) {
 void *runtime_low_map(size_t size, int prot) {
     size=align_up(size,PAGE);
     write_lock();
+    if (!low_next) low_next=LOW_MIN;
 #ifdef _WIN32
     void *p=NULL;
     while (!p && low_next+size<=USER_MIN) {
@@ -938,7 +949,11 @@ void runtime_memory_share(int *pool_out, uint64_t *pool_size, int *low_out, uint
     low_create();
     *pool_out=pool_fd; *pool_size=POOL_SIZE+FLEX_SPAN;
     *low_out=low_fd; *low_base=LOW_MIN; *low_size=LOW_MAX-LOW_MIN;
-    *user_min=USER_MIN; *user_max=USER_MAX;
+    /* The service reserves the whole window: the guest range and low memory above it. */
+    *user_min=USER_MIN; *user_max=LOW_MAX;
+}
+int runtime_memory_is_shared_low(uintptr_t address, uint64_t size) {
+    return low_fd>=0 && address>=LOW_MIN && address+size<=LOW_MAX;
 }
 /* Sets the observer and replays the current guest mappings to it. */
 void runtime_memory_set_mapping_observer(RuntimeMappingObserver observer) {

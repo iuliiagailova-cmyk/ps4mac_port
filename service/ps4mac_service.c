@@ -60,7 +60,8 @@ static void map_guest_memory(void) {
     /* Low memory, whole: offset = address - low_base on both sides. */
     if (low_fd >= 0) {
         void *low = (void *)(uintptr_t)block->low_base;
-        void *q = mmap(low, block->low_size, PROT_READ | PROT_WRITE, MAP_SHARED, low_fd, 0);
+        /* Inside the reservation above (user_max covers low memory): MAP_FIXED replaces only it. */
+        void *q = mmap(low, block->low_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, low_fd, 0);
         if (q != low) {
             fprintf(stderr, "ps4mac_service: cannot map low memory at %p (got %p)\n", low, q);
             exit(1);
@@ -117,9 +118,11 @@ int main(int argc, char **argv) {
     if (write(socket_fd, "R", 1) != 1) fail("ready");
     pthread_t watcher;
     pthread_create(&watcher, NULL, socket_watch, (void *)(intptr_t)socket_fd);
+    /* Poll after the last message, then sleep (step 3.0); PS4MAC_SERVICE_SPIN_US, default 2000. */
+    const char *spin_env = getenv("PS4MAC_SERVICE_SPIN_US");
+    const uint64_t spin_ns = (spin_env ? strtoull(spin_env, NULL, 10) : 2000) * 1000ull;
     for (;;) {
         Ps4macMessage m;
-        /* Poll 2 ms after the last message, then sleep (step 3.0). */
-        if (ps4mac_ring_pop(&block->to_graphics, &m, 2000000ull, 1000000000ull)) handle(&m);
+        if (ps4mac_ring_pop(&block->to_graphics, &m, spin_ns, 1000000000ull)) handle(&m);
     }
 }

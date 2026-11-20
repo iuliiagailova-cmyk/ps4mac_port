@@ -110,6 +110,20 @@ static void protect(void *p, size_t size, unsigned flags) {
     FlushInstructionCache(GetCurrentProcess(), p, size);
 #else
     int mode = ((flags & 4) ? PROT_READ : 0) | ((flags & 2) ? PROT_WRITE : 0) | ((flags & 1) ? PROT_EXEC : 0);
+#ifdef __APPLE__
+    /* ps4mac_port: shared memory cannot be made executable. Code in low memory shared with the
+     * graphics service (PS4MAC_SERVICE) becomes a private copy; the service needs data, not code. */
+    if ((flags & 1) && runtime_memory_is_shared_low((uintptr_t)p, size)) {
+        void *copy = malloc(size);
+        if (!copy) fail("out of memory");
+        if (mprotect(p, size, PROT_READ)) fail("mprotect failed"); /* it may be inaccessible by now */
+        memcpy(copy, p, size);
+        if (mmap(p, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) != p)
+            fail("cannot make a private copy of code");
+        memcpy(p, copy, size);
+        free(copy);
+    }
+#endif
     if (mprotect(p, size, mode)) fail("mprotect failed");
 #endif
 }
