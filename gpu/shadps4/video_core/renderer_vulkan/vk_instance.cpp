@@ -3,6 +3,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 #include <boost/container/static_vector.hpp>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
@@ -517,6 +518,18 @@ bool Instance::CreateDevice() {
             }
         }
     }
+    // ps4mac_port: SPARTAN_NO_ROBUSTNESS=buffer|image|all leaves robust buffer and/or image access
+    // off: the guest's out-of-range accesses are then undefined (GCN reads 0 and drops writes).
+    // On KosmicKrisp the buffer checks cost ~15% of a frame in R&C (its profile turns them off);
+    // without image checks R&C gains nothing, and without both it hangs at start.
+    const char* no_robust_env = std::getenv("SPARTAN_NO_ROBUSTNESS");
+    const std::string no_robust = no_robust_env ? no_robust_env : "";
+    const bool robust_buffers = no_robust != "buffer" && no_robust != "all";
+    const bool robust_images = no_robust != "image" && no_robust != "all";
+    if (!no_robust.empty()) {
+        std::printf("GPU: robust buffer access %s, robust image access %s (SPARTAN_NO_ROBUSTNESS)\n",
+                    robust_buffers ? "on" : "off", robust_images ? "on" : "off");
+    }
     vk::StructureChain device_chain = {
         vk::DeviceCreateInfo{
             .queueCreateInfoCount = queue_family_index == sparse_queue_family_index ? 1u : 2u,
@@ -526,7 +539,7 @@ bool Instance::CreateDevice() {
         },
         vk::PhysicalDeviceFeatures2{
             .features{
-                .robustBufferAccess = features.robustBufferAccess,
+                .robustBufferAccess = robust_buffers && features.robustBufferAccess,
                 .imageCubeArray = features.imageCubeArray,
                 .independentBlend = features.independentBlend,
                 .geometryShader = features.geometryShader,
@@ -579,7 +592,7 @@ bool Instance::CreateDevice() {
             .shaderOutputLayer = vk12_features.shaderOutputLayer,
         },
         vk::PhysicalDeviceVulkan13Features{
-            .robustImageAccess = vk13_features.robustImageAccess,
+            .robustImageAccess = robust_images && vk13_features.robustImageAccess,
             .shaderDemoteToHelperInvocation = vk13_features.shaderDemoteToHelperInvocation,
             .subgroupSizeControl = vk13_features.subgroupSizeControl,
             .synchronization2 = vk13_features.synchronization2,
@@ -603,8 +616,8 @@ bool Instance::CreateDevice() {
             .depthClipEnable = true,
         },
         vk::PhysicalDeviceRobustness2FeaturesEXT{
-            .robustBufferAccess2 = true,
-            .robustImageAccess2 = true,
+            .robustBufferAccess2 = robust_buffers,
+            .robustImageAccess2 = robust_images,
             .nullDescriptor = true,
         },
         vk::PhysicalDeviceVertexInputDynamicStateFeaturesEXT{
