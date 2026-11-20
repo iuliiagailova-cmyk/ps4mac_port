@@ -984,12 +984,39 @@ bool Rasterizer::FilterDrawPasses() const {
 // A frame was otherwise recorded into one or two command buffers: the GPU started it only once
 // the whole frame was recorded (~95 ms later in Ratchet & Clank's levels), and the CPU then
 // waited for all of it at its next write to GPU-written memory.
-void Rasterizer::MaybeAutoFlush() {
+void Rasterizer::MaybeAutoFlush(bool is_dispatch) {
     static const u32 every = [] {
         const char* env = std::getenv("SPARTAN_FLUSH_DRAWS");
         return env ? static_cast<u32>(std::strtoul(env, nullptr, 10)) : 0u;
     }();
-    if (every == 0 || ++work_since_flush < every) {
+    // ps4mac_port: a submission ends the render pass in progress (a store and a load of every
+    // attachment on a tiled GPU). Once due, it waits for the next pass boundary: a draw to other
+    // render targets or a dispatch. SPARTAN_FLUSH_AT_PASS_BOUNDARY=0:
+    // submit on the count, as before.
+    static const bool at_boundary = [] {
+        const char* env = std::getenv("SPARTAN_FLUSH_AT_PASS_BOUNDARY");
+        return !(env && env[0] == '0');
+    }();
+    if (every == 0) {
+        return;
+    }
+    ++work_since_flush;
+    bool boundary = true;
+    if (at_boundary && !is_dispatch) {
+        const auto& regs = Regs();
+        u64 signature = regs.depth_buffer.DepthAddress() * 0x9E3779B97F4A7C15ull;
+        for (u32 cb = 0; cb < AmdGpu::NUM_COLOR_BUFFERS; ++cb) {
+            if (regs.color_buffers[cb]) {
+                signature = (signature ^ regs.color_buffers[cb].Address()) * 0x100000001B3ull + cb;
+            }
+        }
+        boundary = signature != last_target_signature;
+        last_target_signature = signature;
+    }
+    // Due from half the count at a boundary, at 1.5 times it anywhere (the GPU should not wait
+    // longer for work than before).
+    if (at_boundary ? (boundary ? 2 * work_since_flush < every : 2 * work_since_flush < 3 * every)
+                    : work_since_flush < every) {
         return;
     }
     work_since_flush = 0;
@@ -1444,7 +1471,7 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
 void Rasterizer::DispatchDirect() {
     RENDERER_TRACE;
     SpartanStats::dispatches.fetch_add(1, std::memory_order_relaxed);
-    MaybeAutoFlush();
+    MaybeAutoFlush(true);
     // spartanport: like draws, handed to the draw recording thread after the pipeline selection.
     const bool pipelined = UseDrawPipe() && !SpartanToggle::Disabled(SpartanToggle::PipelinedDispatch);
     if (!pipelined) {

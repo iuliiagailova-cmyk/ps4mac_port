@@ -149,8 +149,9 @@ public:
 
     u64 Flush();
     /// spartanport: SPARTAN_FLUSH_DRAWS (see vk_rasterizer.cpp).
-    void MaybeAutoFlush();
+    void MaybeAutoFlush(bool is_dispatch = false);
     u32 work_since_flush = 0;
+    u64 last_target_signature = 0; // MaybeAutoFlush: the render targets of the last draw
     void Finish();
     void OnSubmit();
 

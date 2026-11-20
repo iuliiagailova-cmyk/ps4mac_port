@@ -209,13 +209,21 @@ void Scheduler::BeginRendering(const RenderState& new_state) {
         }
     }
 
+    // ps4mac_port measurement (breaks the image): SPARTAN_LOADSTORE_BOUND=load drops colour loads,
+    // =store drops depth/stencil stores: the upper bound of what smarter load/store ops can save.
+    static const int loadstore_bound = [] {
+        const char* env = std::getenv("SPARTAN_LOADSTORE_BOUND");
+        return !env ? 0 : env[0] == 'l' ? 1 : env[0] == 's' ? 2 : 0;
+    }();
     std::array<vk::RenderingAttachmentInfo, 8> color_attachments;
     for (u32 i = 0; i < render_state.num_color_attachments; ++i) {
         const auto& cb = render_state.color_attachments[i];
         color_attachments[i] = vk::RenderingAttachmentInfo{
             .imageView = cb.image_view,
             .imageLayout = cb.image_layout,
-            .loadOp = cb.is_clear ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad,
+            .loadOp = cb.is_clear ? vk::AttachmentLoadOp::eClear
+                      : loadstore_bound == 1 ? vk::AttachmentLoadOp::eDontCare
+                                             : vk::AttachmentLoadOp::eLoad,
             .storeOp = vk::AttachmentStoreOp::eStore,
             .clearValue = vk::ClearValue{.color = vk::ClearColorValue{.uint32 = cb.clear_value}},
         };
@@ -225,7 +233,7 @@ void Scheduler::BeginRendering(const RenderState& new_state) {
         .imageView = db.image_view,
         .imageLayout = db.image_layout,
         .loadOp = db.depth_clear ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad,
-        .storeOp = vk::AttachmentStoreOp::eStore,
+        .storeOp = loadstore_bound == 2 ? vk::AttachmentStoreOp::eDontCare : vk::AttachmentStoreOp::eStore,
         .clearValue =
             vk::ClearValue{.depthStencil = vk::ClearDepthStencilValue{.depth = std::bit_cast<float>(
                                                                           db.clear_value[0])}},
@@ -234,7 +242,7 @@ void Scheduler::BeginRendering(const RenderState& new_state) {
         .imageView = db.image_view,
         .imageLayout = db.image_layout,
         .loadOp = db.stencil_clear ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad,
-        .storeOp = vk::AttachmentStoreOp::eStore,
+        .storeOp = loadstore_bound == 2 ? vk::AttachmentStoreOp::eDontCare : vk::AttachmentStoreOp::eStore,
         .clearValue = vk::ClearValue{.depthStencil =
                                          vk::ClearDepthStencilValue{.stencil = db.clear_value[1]}},
     };
