@@ -1,6 +1,7 @@
 //  SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 //  SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "spartanport_graphics.h"
 #include "common/assert.h"
 #include "core/emulator_settings.h"
@@ -241,6 +242,7 @@ vk::ImageView FsrPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView input,
             cmdbuf.pushConstants(pipeline_layout.get(), vk::ShaderStageFlagBits::eCompute, 0,
                                  sizeof(FSRConstants), &consts);
             cmdbuf.dispatch(dispatch_x, dispatch_y, 1);
+            Vulkan::LabelComputeWork(cmdbuf, "internal: FSR");
         }
 
         std::array img_barrier{
@@ -316,6 +318,7 @@ vk::ImageView FsrPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView input,
             cmdbuf.pushConstants(pipeline_layout.get(), vk::ShaderStageFlagBits::eCompute, 0,
                                  sizeof(FSRConstants), &consts);
             cmdbuf.dispatch(dispatch_x, dispatch_y, 1);
+            Vulkan::LabelComputeWork(cmdbuf, "internal: FSR");
         }
 
     } else {
@@ -361,6 +364,7 @@ vk::ImageView FsrPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView input,
         cmdbuf.pushConstants(pipeline_layout.get(), vk::ShaderStageFlagBits::eCompute, 0,
                              sizeof(FSRConstants), &consts);
         cmdbuf.dispatch(dispatch_x, dispatch_y, 1);
+        Vulkan::LabelComputeWork(cmdbuf, "internal: FSR");
     }
 
     const std::array return_barrier{

@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <string>
+
 #include <atomic>
 #include <chrono>
 #include <cstring>
@@ -715,6 +717,12 @@ public:
     void SetPassBoundaryHook(std::function<void()> hook) {
         pass_boundary_hook = std::move(hook);
     }
+    /// ps4mac_port: a debug label for the next render pass or dispatch (GpuProfiler labels mode),
+    /// inserted right after it starts so the driver can name the Metal encoder.
+    void SetPendingLabel(std::string label) {
+        pending_label = std::move(label);
+    }
+    void EmitPendingLabel();
 
     /// spartanport: a render pass that only clears depth/stencil (load op) is begun by the next
     /// BeginRendering on the same depth view and render area, as its load op, instead of
@@ -946,6 +954,7 @@ private:
     RenderState render_state;
     bool is_rendering = false;
     std::function<void()> pass_boundary_hook;
+    std::string pending_label;
     std::optional<RenderState> pending_clear;
     // spartanport: threaded recording
     std::unique_ptr<RecordChunk> record_chunk;

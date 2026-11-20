@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -224,6 +225,7 @@ void TileManager::RecordTilingDispatch(vk::Pipeline pipeline, const vk::Descript
         }};
         cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, layout, 0, set_writes);
         cmdbuf.dispatch(dim_x, 1, 1);
+        Vulkan::LabelComputeWork(cmdbuf, "internal: tile manager");
         if (Vulkan::Scheduler::FullBarriers()) {
             Vulkan::Scheduler::RecordFullBarrier(cmdbuf);
         }

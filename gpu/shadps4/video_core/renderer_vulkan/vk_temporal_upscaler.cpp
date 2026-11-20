@@ -701,6 +701,7 @@ void TemporalUpscaler::RecordTaa(vk::CommandBuffer cmdbuf, vk::ImageView color,
     cmdbuf.pushConstants(*taa_pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0,
                          sizeof(params), &params);
     cmdbuf.dispatch((out_width + 7) / 8, (out_height + 7) / 8, 1);
+    Vulkan::LabelComputeWork(cmdbuf, "internal: temporal upscaler");
     const auto& settings = SpartanSettings::Get();
     const float strength = std::clamp(settings.sharpness.load(), 0.0f, 2.0f);
     if (settings.sharpen && strength > 0.0f && !(params.pad & 0xffu)) {
@@ -724,6 +725,7 @@ void TemporalUpscaler::RecordTaa(vk::CommandBuffer cmdbuf, vk::ImageView color,
         cmdbuf.pushConstants(*taa_sharpen_pipeline_layout, vk::ShaderStageFlagBits::eCompute,
                              0, sizeof(strength), &strength);
         cmdbuf.dispatch((out_width + 7) / 8, (out_height + 7) / 8, 1);
+        Vulkan::LabelComputeWork(cmdbuf, "internal: temporal upscaler");
     }
     taa_next = 1 - taa_next;
 }
@@ -814,6 +816,7 @@ void TemporalUpscaler::ExtraSharpen(vk::CommandBuffer cmdbuf, vk::Image target, 
     cmdbuf.pushConstants(*taa_sharpen_pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0,
                          sizeof(extra), &extra);
     cmdbuf.dispatch((w + 7) / 8, (h + 7) / 8, 1);
+    Vulkan::LabelComputeWork(cmdbuf, "internal: temporal upscaler");
     image_barrier(target, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
                   vk::AccessFlagBits2::eShaderStorageWrite, all, rw);
 }
@@ -979,6 +982,7 @@ bool TemporalUpscaler::RecordReactive(vk::ImageView color_view) {
         cmdbuf.pushConstants(layout, vk::ShaderStageFlagBits::eCompute, 0,
                              sizeof(params), params.data());
         cmdbuf.dispatch((w + 7) / 8, (h + 7) / 8, 1);
+        Vulkan::LabelComputeWork(cmdbuf, "internal: temporal upscaler");
         const vk::ImageMemoryBarrier2 to_read{
             .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
             .srcAccessMask = vk::AccessFlagBits2::eShaderWrite,
@@ -1226,6 +1230,7 @@ void TemporalUpscaler::Run() {
         cmdbuf.pushConstants(*merge_pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0,
                              sizeof(mode), &mode);
         cmdbuf.dispatch((ow + 7) / 8, (oh + 7) / 8, 1);
+        Vulkan::LabelComputeWork(cmdbuf, "internal: temporal upscaler");
     }
 }
 

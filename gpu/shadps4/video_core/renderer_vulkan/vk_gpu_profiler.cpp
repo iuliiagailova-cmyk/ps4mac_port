@@ -11,10 +11,14 @@ namespace Vulkan {
 
 void GpuProfiler::Init(const Instance& instance, Scheduler& scheduler) {
     const char* env = std::getenv("SPARTAN_GPU_PROFILE");
-    if (!env || env[0] != '1' || instance_ptr) {
+    if (!env || (env[0] != '1' && env[0] != 'r' && env[0] != 'l') || instance_ptr) {
         return;
     }
     instance_ptr = new GpuProfiler(instance, scheduler);
+    instance_ptr->labels_only = env[0] == 'l';
+    if (instance_ptr->labels_only) {
+        std::printf("GPU profile: labels for Metal System Trace (KK_LABEL_ENCODERS=1)\n");
+    }
 }
 
 GpuProfiler::GpuProfiler(const Instance& instance, Scheduler& scheduler_)
@@ -47,7 +51,14 @@ void GpuProfiler::WriteTimestamp(u64 key) {
     });
 }
 
+void GpuProfiler::SetLabel(const std::string& label) {
+    scheduler.SetPendingLabel(label);
+}
+
 void GpuProfiler::BeginFrame() {
+    if (labels_only) {
+        return;
+    }
     // Close the frame: one more timestamp without a label.
     if (!paused && used[slice] > 0 && used[slice] < SliceQueries) {
         scheduler.EndRendering();
@@ -90,8 +101,26 @@ void GpuProfiler::Collect(u32 which) {
     if (result != vk::Result::eSuccess) {
         return;
     }
+    // ps4mac_port: KosmicKrisp leaves some timestamps unwritten (0 or its unavailable sentinel)
+    // and others out of order; such segments are counted apart instead of summed.
+    static int raw_dumps = [] {
+        const char* env = std::getenv("SPARTAN_GPU_PROFILE");
+        return env && env[0] == 'r' ? 2 : 0;
+    }();
+    if (raw_dumps > 0) {
+        --raw_dumps;
+        std::printf("GPU profile raw stamps (%u):", count);
+        for (u32 i = 0; i < count; ++i) {
+            std::printf(" %llx", static_cast<unsigned long long>(stamps[i]));
+        }
+        std::printf("\n");
+    }
     for (u32 i = 0; i + 1 < count; ++i) {
-        const double ms = double(stamps[i + 1] - stamps[i]) * period_ns / 1e6;
+        const double ms = double(s64(stamps[i + 1] - stamps[i])) * period_ns / 1e6;
+        if (!stamps[i] || !stamps[i + 1] || ms < 0 || ms > 1000) {
+            ++invalid_segments;
+            continue;
+        }
         auto& total = totals[keys[which][i]];
         total.ms += ms;
         ++total.segments;
@@ -111,8 +140,10 @@ void GpuProfiler::Print() {
     for (const auto& [key, total] : sorted) {
         sum += total.ms;
     }
-    std::printf("GPU profile: %.2f ms/frame over %llu frames, %zu labels\n", sum / frames,
-                static_cast<unsigned long long>(frames), sorted.size());
+    std::printf("GPU profile: %.2f ms/frame over %llu frames, %zu labels, %.1f invalid segments/frame\n",
+                sum / frames, static_cast<unsigned long long>(frames), sorted.size(),
+                double(invalid_segments) / frames);
+    invalid_segments = 0;
     for (size_t i = 0; i < std::min<size_t>(sorted.size(), 30); ++i) {
         const auto& [key, total] = sorted[i];
         std::printf("  %6.3f ms/frame %5.1f/frame  %s\n", total.ms / frames,

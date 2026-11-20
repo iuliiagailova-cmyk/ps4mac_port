@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "video_core/renderer_vulkan/vk_camera_motion.h"
 
 #include <cmath>
@@ -216,6 +217,7 @@ void CameraMotion::RecordMotion(vk::CommandBuffer cmdbuf, vk::ImageView depth_vi
     cmdbuf.pushConstants(*motion_pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0,
                          sizeof(push), &push);
     cmdbuf.dispatch((width + 7) / 8, (height + 7) / 8, 1);
+    Vulkan::LabelComputeWork(cmdbuf, "internal: camera motion");
 }
 
 void CameraMotion::OnConstants(const float* data) {
@@ -363,6 +365,7 @@ void CameraMotion::Overlay(VideoCore::ImageId frame) {
     };
     cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &frame_barrier});
     cmdbuf.dispatch((color.info.size.width + 7) / 8, (color.info.size.height + 7) / 8, 1);
+    Vulkan::LabelComputeWork(cmdbuf, "internal: camera motion");
 
     scheduler.DeferOperation([device, depth_view, color_view] {
         device.destroyImageView(depth_view);

@@ -7,6 +7,7 @@
 #pragma once
 
 #include <array>
+#include <cstdlib>
 #include <chrono>
 #include <cstdio>
 #include <string>
@@ -17,6 +18,18 @@
 #include "video_core/renderer_vulkan/vk_common.h"
 
 namespace Vulkan {
+
+/// ps4mac_port: SPARTAN_GPU_PROFILE=labels: names the compute encoder holding the dispatch just
+/// recorded on `cmdbuf` (KosmicKrisp with KK_LABEL_ENCODERS=1), for Metal System Trace.
+inline void LabelComputeWork(vk::CommandBuffer cmdbuf, const char* name) {
+    static const bool enabled = [] {
+        const char* env = std::getenv("SPARTAN_GPU_PROFILE");
+        return env && env[0] == 'l';
+    }();
+    if (enabled) {
+        cmdbuf.insertDebugUtilsLabelEXT(vk::DebugUtilsLabelEXT{.pLabelName = name});
+    }
+}
 
 class Instance;
 class Scheduler;
@@ -35,7 +48,16 @@ public:
         if (!described.contains(key)) {
             described.emplace(key, describe());
         }
+        if (labels_only) {
+            // ps4mac_port: SPARTAN_GPU_PROFILE=labels names the next render pass or dispatch for a
+            // Metal System Trace (KosmicKrisp with KK_LABEL_ENCODERS=1 labels the encoder).
+            SetLabel(described[key]);
+            return;
+        }
         WriteTimestamp(key);
+    }
+    [[nodiscard]] bool LabelsOnly() const noexcept {
+        return labels_only;
     }
 
     /// The label of the open segment, for Resume after a nested segment (transfers).
@@ -58,6 +80,9 @@ public:
 private:
     GpuProfiler(const Instance& instance, Scheduler& scheduler);
     void WriteTimestamp(u64 key);
+    void SetLabel(const std::string& label);
+    bool labels_only = false;
+    u64 invalid_segments = 0;
     void Collect(u32 slice);
     void Print();
 

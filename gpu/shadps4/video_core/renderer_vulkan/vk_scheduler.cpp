@@ -265,6 +265,7 @@ void Scheduler::BeginRendering(const RenderState& new_state) {
             RecordFullBarrier(current_cmdbuf);
         }
         current_cmdbuf.beginRendering(rendering_info);
+        EmitPendingLabel();
         return;
     }
     // The attachment infos live on this stack frame: the recorded closure keeps copies.
@@ -282,6 +283,17 @@ void Scheduler::BeginRendering(const RenderState& new_state) {
         }
         cmdbuf.beginRendering(info);
     });
+    EmitPendingLabel();
+}
+
+void Scheduler::EmitPendingLabel() {
+    if (pending_label.empty()) {
+        return;
+    }
+    Record([label = std::move(pending_label)](vk::CommandBuffer cmdbuf) {
+        cmdbuf.insertDebugUtilsLabelEXT(vk::DebugUtilsLabelEXT{.pLabelName = label.c_str()});
+    });
+    pending_label.clear();
 }
 
 [[gnu::noinline]] void Scheduler::EndRendering() {

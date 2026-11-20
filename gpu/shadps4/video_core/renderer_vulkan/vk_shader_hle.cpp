@@ -130,6 +130,7 @@ static bool MultiCopy(Rasterizer& rasterizer, const VideoCore::Buffer* src,
         cmdbuf.pushConstants(*pipe.layout, vk::ShaderStageFlagBits::eCompute, 0, sizeof(count),
                              &count);
         cmdbuf.dispatch(count, 1, 1);
+        Vulkan::LabelComputeWork(cmdbuf, "internal: HLE copy shader");
         if (Vulkan::Scheduler::FullBarriers()) {
             Vulkan::Scheduler::RecordFullBarrier(cmdbuf);
         }

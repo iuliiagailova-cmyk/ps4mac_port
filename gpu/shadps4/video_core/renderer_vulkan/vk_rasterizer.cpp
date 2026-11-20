@@ -1541,6 +1541,7 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
             Scheduler::RecordFullBarrier(cmdbuf);
         }
     });
+    scheduler.EmitPendingLabel();
     DebugState.IncDispatch();
 
     // spartanport diagnostics: SPARTAN_DIAG_IMAGES=1 writes the images a dispatch read and wrote, after
@@ -1613,6 +1614,7 @@ void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr a
             Scheduler::RecordFullBarrier(cmdbuf);
         }
     });
+    scheduler.EmitPendingLabel();
     DebugState.IncDispatch();
 
     ResetBindings(true);
