@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <array>
+#include <mutex>
+#include <atomic>
 #include <chrono>
 #include <pthread.h>
 #ifndef _WIN32
@@ -244,6 +247,78 @@ bool PipelinedOpcode(PM4ItOpcode opcode) {
 } // namespace
 
 namespace {
+// spartanport: SPARTAN_EOP_TIMING=1 — how long an end-of-pipe fence takes from the guest's
+// submission to its label write, by stage, printed every 5 s: queued (submit -> GPU thread
+// reaches the packet), pipe (-> draw recording thread reaches it), readback (image downloads,
+// a GPU wait), copies (-> label written after the queued host copies).
+struct EopSums {
+    u64 n = 0, queued = 0, pipe = 0, readback = 0, copies = 0, total = 0, max_total = 0;
+    u64 long_n = 0, long_total = 0, long_queued = 0, long_pipe = 0, long_readback = 0;
+};
+struct EopTiming {
+    static bool Enabled() {
+        static const bool on = [] {
+            const char* env = std::getenv("SPARTAN_EOP_TIMING");
+            return env && env[0] == '1';
+        }();
+        return on;
+    }
+    static u64 Now() {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    }
+    static constexpr u32 Ring = 256;
+    inline static std::atomic<u64> last_submit{0};
+    inline static std::array<std::atomic<u64>, Ring> submit_at{}, stage_a_at{};
+    inline static std::atomic<u64> a_seq{0};
+    inline static u64 b_seq = 0; // draw recording thread only
+    inline static std::mutex mutex;
+    inline static EopSums sums;
+    inline static u64 window = 0;
+    static void Add(u64 t0, u64 t1, u64 t2, u64 t3, u64 t4) {
+        std::scoped_lock lock{mutex};
+        if (t0 == 0 || t0 > t1) {
+            t0 = t1;
+        }
+        sums.n++;
+        sums.queued += t1 - t0;
+        sums.pipe += t2 - t1;
+        sums.readback += t3 - t2;
+        sums.copies += t4 - t3;
+        sums.total += t4 - t0;
+        sums.max_total = std::max(sums.max_total, t4 - t0);
+        if (t4 - t0 >= 20'000'000) {
+            sums.long_n++;
+            sums.long_total += t4 - t0;
+            sums.long_queued += t1 - t0;
+            sums.long_pipe += t2 - t1;
+            sums.long_readback += t3 - t2;
+        }
+        if (window == 0) {
+            window = t4;
+        }
+        if (t4 - window >= 5'000'000'000ull) {
+            const double n = double(sums.n);
+            std::printf("EOP timing: %llu fences in %.1f s, mean ms: queued %.2f, pipe %.2f, "
+                        "readback %.2f, copies %.2f, total %.2f (max %.2f)\n",
+                        (unsigned long long)sums.n, (t4 - window) / 1e9, sums.queued / n / 1e6,
+                        sums.pipe / n / 1e6, sums.readback / n / 1e6, sums.copies / n / 1e6,
+                        sums.total / n / 1e6, sums.max_total / 1e6);
+            if (sums.long_n) {
+                const double ln = double(sums.long_n);
+                std::printf("  over 20 ms: %llu fences (%.1f/s), mean %.1f ms: queued %.1f, pipe %.1f, "
+                            "readback %.1f\n",
+                            (unsigned long long)sums.long_n, ln / ((t4 - window) / 1e9),
+                            sums.long_total / ln / 1e6, sums.long_queued / ln / 1e6,
+                            sums.long_pipe / ln / 1e6, sums.long_readback / ln / 1e6);
+            }
+            sums = {};
+            window = t4;
+        }
+    }
+};
+
 void SignalEop(const PM4CmdEventWriteEop& eop) {
     eop.SignalFence(
         [](void* address, u64 data, u32 num_bytes) {
@@ -260,7 +335,18 @@ void SignalEop(const PM4CmdEventWriteEop& eop) {
 // the draw recording thread when the draw pipeline is in use).
 void RunEventWriteEop(Vulkan::Rasterizer& rasterizer, const u8* data) {
     const auto eop = *reinterpret_cast<const PM4CmdEventWriteEop*>(data);
+    u64 t0 = 0, t1 = 0, t2 = 0, t3 = 0;
+    const bool timing = EopTiming::Enabled();
+    if (timing) {
+        const u64 seq = EopTiming::b_seq++;
+        t0 = EopTiming::submit_at[seq % EopTiming::Ring];
+        t1 = EopTiming::stage_a_at[seq % EopTiming::Ring];
+        t2 = EopTiming::Now();
+    }
     rasterizer.ProcessDownloadImages();
+    if (timing) {
+        t3 = EopTiming::Now();
+    }
     // Guest memory copies on the copy threads precede the fence the guest sees.
     // SPARTAN_ASYNC_FENCES=1 writes it once they are done instead of waiting for them; measured
     // slower (79 vs 83 FPS): the guest waits on these fences, and later fences stall it more
@@ -274,12 +360,20 @@ void RunEventWriteEop(Vulkan::Rasterizer& rasterizer, const u8* data) {
     } else if (Vulkan::DrawPipe::OnStageB() && !SpartanToggle::Disabled(SpartanToggle::RecorderFences)) {
         // The draw recording thread does not wait: the Vulkan recording thread signals the
         // fence after the copies queued before it.
-        rasterizer.SignalAfterHostCopies([eop] { SignalEop(eop); });
+        rasterizer.SignalAfterHostCopies([eop, timing, t0, t1, t2, t3] {
+            SignalEop(eop);
+            if (timing) {
+                EopTiming::Add(t0, t1, t2, t3, EopTiming::Now());
+            }
+        });
     } else {
         // Labels are written in order: not before the ones deferred to the recording thread.
         rasterizer.WaitHostCopies();
         rasterizer.WaitDeferredSignals();
         SignalEop(eop);
+        if (timing) {
+            EopTiming::Add(t0, t1, t2, t3, EopTiming::Now());
+        }
     }
 }
 
@@ -1144,6 +1238,11 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
             }
             case PM4ItOpcode::EventWriteEop: {
                 const auto* event_eop = reinterpret_cast<const PM4CmdEventWriteEop*>(header);
+                if (EopTiming::Enabled()) {
+                    const u64 seq = EopTiming::a_seq.fetch_add(1);
+                    EopTiming::submit_at[seq % EopTiming::Ring] = EopTiming::last_submit.load();
+                    EopTiming::stage_a_at[seq % EopTiming::Ring] = EopTiming::Now();
+                }
                 if (rasterizer) {
                     if (rasterizer->RunInOrder(&RunEventWriteEop, event_eop, sizeof(*event_eop))) {
                         NotePendingFences(*event_eop);
@@ -1675,6 +1774,9 @@ Liverpool::CmdBuffer Liverpool::CopyCmdBuffers(std::span<const u32> dcb, std::sp
 
 void Liverpool::SubmitGfx(std::span<const u32> dcb, std::span<const u32> ccb) {
     auto& queue = mapped_queues[GfxQueueId];
+    if (EopTiming::Enabled()) {
+        EopTiming::last_submit = EopTiming::Now();
+    }
 
     if (EmulatorSettings.IsCopyGpuBuffers()) {
         std::tie(dcb, ccb) = CopyCmdBuffers(dcb, ccb);
