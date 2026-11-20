@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define PS4MAC_BRIDGE_VERSION 3u
+#define PS4MAC_BRIDGE_VERSION 4u
 
 /* Guest -> graphics, in order (submissions and memory changes share one ring: a submission
  * must see the mappings made before it). Messages with PS4MAC_FLAG_REPLY get a PS4MAC_REPLY
@@ -32,8 +32,9 @@ enum Ps4macToGraphics {
     PS4MAC_MEMORY_MAP,           /* guest mapping appeared: a address, b size, c pool offset, d host prot */
     PS4MAC_MEMORY_UNMAP,         /* a address, b size */
     PS4MAC_MEMORY_INVALIDATE,    /* guest wrote memory without a fault (e.g. file reads) */
-    PS4MAC_WRITE_FAULT,          /* step 3.4: guest wrote a protected page */
-    PS4MAC_READ_FAULT,
+    PS4MAC_WRITE_FAULT,          /* a address, sequence: the guest wrote a page the GPU protects;
+                                  * the result goes to the shared block (fault_done, fault_result) */
+    PS4MAC_READ_FAULT,           /* the same for a read (a readback) */
     PS4MAC_MEMORY_PROTECT,       /* the guest changed protection: a address, b size, d host prot */
     PS4MAC_GPU_INIT,             /* the video core may start: configuration in the shared block */
     /* Ps4mac::Gfx (gpu/shim/ps4mac_graphics.h), step 3.3c: */
@@ -52,7 +53,8 @@ enum Ps4macToGraphics {
 /* Graphics -> guest. */
 enum Ps4macToGuest {
     PS4MAC_IRQ = 1,              /* a Platform::InterruptId: signalled to the guest's IrqC (equeue) */
-    PS4MAC_PROTECT,              /* step 3.4: track CPU writes (and reads) of a range */
+    PS4MAC_PROTECT,              /* a address, b size, c read | write << 1, sequence: the guest runs
+                                  * runtime_memory_gpu_protect, then sets protect_done = sequence */
     PS4MAC_FAULT_DONE,           /* step 3.4 */
     PS4MAC_FLIP_DONE,            /* (unused) */
     PS4MAC_QUEUE_MAPPED,         /* (unused: PS4MAC_REPLY) */

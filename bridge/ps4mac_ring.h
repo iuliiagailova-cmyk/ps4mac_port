@@ -54,6 +54,11 @@ typedef struct {
     uint32_t vo_port_size, vo_labels_offset, vo_groups_offset, vo_slots_offset;
     _Atomic uint32_t gfx_ready;     /* the service's video core is up (it answers Ps4mac::Gfx) */
     uint32_t gfx_hdr_supported;
+    /* Step 3.4, page tracking. Faults are answered in sequence order: fault_done is the last
+     * sequence handled, fault_result[sequence % 256] whether it was the GPU's page. */
+    _Alignas(64) _Atomic uint32_t fault_done;
+    uint8_t fault_result[256];
+    _Alignas(64) _Atomic uint32_t protect_done; /* the last PS4MAC_PROTECT the guest applied */
     Ps4macSharedRing to_graphics;
     Ps4macSharedRing to_guest;
 } Ps4macSharedBlock;
@@ -110,6 +115,24 @@ static inline int ps4mac_ring_pop(Ps4macSharedRing *r, Ps4macMessage *m, uint64_
     *m = r->slots[tail % PS4MAC_RING_SLOTS];
     atomic_store_explicit(&r->tail, tail + 1, memory_order_release);
     return 1;
+}
+
+/* Waits until the 32-bit sequence counter reaches `target` (wrapping), polling for `spin_ns`
+ * first; the other side stores the counter, then calls ps4mac_counter_wake. */
+static inline void ps4mac_counter_wait(_Atomic uint32_t *counter, uint32_t target, uint64_t spin_ns) {
+    const uint64_t start = ps4mac_now_ns();
+    for (uint32_t n = 0;; ++n) {
+        const uint32_t now = atomic_load_explicit(counter, memory_order_acquire);
+        if ((int32_t)(now - target) >= 0) return;
+        if ((n & 63) || ps4mac_now_ns() - start < spin_ns) continue;
+        os_sync_wait_on_address_with_timeout((void *)counter, now, 4, OS_SYNC_WAIT_ON_ADDRESS_SHARED,
+                                             OS_CLOCK_MACH_ABSOLUTE_TIME, 1000000);
+    }
+}
+
+static inline void ps4mac_counter_set(_Atomic uint32_t *counter, uint32_t value) {
+    atomic_store_explicit(counter, value, memory_order_release);
+    os_sync_wake_by_address_all((void *)counter, 4, OS_SYNC_WAKE_BY_ADDRESS_SHARED);
 }
 
 /* FNV-1a over guest memory, for the checksum check. */

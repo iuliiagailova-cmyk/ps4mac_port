@@ -180,9 +180,13 @@ int runtime_memory_write_backing(uintptr_t address, const void *data, uint64_t s
     return 1;
 }
 
+static ServiceProtect protect_sender;
+void service_set_protect_sender(ServiceProtect sender) { protect_sender = sender; }
+
+/* Page tracking (step 3.4): the guest runs the mprotect; this returns once it has. */
 void runtime_memory_gpu_protect(uintptr_t address, uint64_t size, int read, int write) {
-    (void)address; (void)size; (void)read; (void)write;
-    __atomic_fetch_add(&gpu_protects, 1, __ATOMIC_RELAXED); /* step 3.4: PS4MAC_PROTECT to the guest */
+    __atomic_fetch_add(&gpu_protects, 1, __ATOMIC_RELAXED);
+    if (protect_sender) protect_sender(address, size, read, write);
 }
 
 /* One clock with the guest: CLOCK_MONOTONIC from the guest's process start. */
@@ -209,7 +213,7 @@ uint64_t runtime_disabled_optimizations;
 __thread sigjmp_buf *runtime_fault_recover;
 
 void runtime_report(void) {
-    fprintf(stderr, "ps4mac_service: %zu guest ranges, %llu page-tracking requests (not forwarded yet)\n",
+    fprintf(stderr, "ps4mac_service: %zu guest ranges, %llu page-tracking requests\n",
             service_memory_range_count(), gpu_protects);
 }
 
@@ -253,20 +257,9 @@ void runtime_bridge_send(const struct Ps4macMessage *m) { (void)m; }
 void runtime_bridge_set_handler(void (*handler)(const struct Ps4macMessage *)) { (void)handler; }
 int runtime_bridge_is_shared(uintptr_t address, uint64_t size) { (void)address; (void)size; return 0; }
 int runtime_bridge_wait_graphics(void) { return 0; }
+int runtime_bridge_fault(uintptr_t address, int is_write) { (void)address; (void)is_write; return 0; }
 void runtime_bridge_set_vo_layout(uint32_t size, uint32_t labels, uint32_t groups, uint32_t slots) {
     (void)size; (void)labels; (void)groups; (void)slots;
 }
 void *runtime_low_map(size_t size, int prot) { (void)size; (void)prot; return NULL; }
 
-/* Diagnostic (PS4MAC_SERVICE_INVALIDATE_ALL=1): every guest range counts as written, as if page
- * tracking had reported everything. Slow; until step 3.4 it shows what tracking will fix. */
-void service_invalidate_all(void) {
-    if (!hook_invalidate) return;
-    pthread_rwlock_rdlock(&table_lock);
-    const size_t n = range_count;
-    Range *copy = malloc((n ? n : 1) * sizeof(Range));
-    memcpy(copy, ranges, n * sizeof(Range));
-    pthread_rwlock_unlock(&table_lock);
-    for (size_t i = 0; i < n; ++i) hook_invalidate(copy[i].start, copy[i].end - copy[i].start);
-    free(copy);
-}

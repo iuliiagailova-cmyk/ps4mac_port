@@ -22,8 +22,10 @@
 #include "core/libraries/videoout/driver.h"
 #include "core/platform.h"
 #include "ps4mac_graphics.h"
+#include "spartanport_toggles.h"
 #include "video_core/amdgpu/liverpool.h"
 #include "video_core/renderer_vulkan/vk_presenter.h"
+#include "video_core/renderer_vulkan/vk_rasterizer.h"
 
 extern std::unique_ptr<Vulkan::Presenter> presenter;
 extern std::unique_ptr<AmdGpu::Liverpool> liverpool;
@@ -241,4 +243,17 @@ extern "C" int ps4mac_gfx_server_check_port(uint32_t size, uint32_t labels, uint
 
 extern "C" int ps4mac_gfx_server_hdr_supported(void) {
     return presenter->IsHDRSupported() ? 1 : 0;
+}
+
+/// Step 3.4: a guest access to a page the GPU protects (PS4MAC_WRITE_FAULT/READ_FAULT), handled as
+/// page_manager.cpp's fault handler does in one process. Returns whether it was such a page.
+extern "C" int ps4mac_gfx_server_fault(uintptr_t address, int is_write) {
+    auto& rasterizer = presenter->GetRasterizer();
+    if (is_write) {
+        SpartanStats::Timer timer{SpartanStats::t_write_faults};
+        return rasterizer.OnWriteFault(VAddr(address), false) ? 1 : 0;
+    }
+    SpartanStats::read_faults.fetch_add(1, std::memory_order_relaxed);
+    SpartanStats::Timer timer{SpartanStats::t_read_faults};
+    return rasterizer.ReadMemory(VAddr(address), 8, false) ? 1 : 0;
 }

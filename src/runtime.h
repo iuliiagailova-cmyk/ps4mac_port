@@ -101,6 +101,7 @@ void runtime_bridge_send(const struct Ps4macMessage *m);
 void runtime_bridge_set_handler(void (*handler)(const struct Ps4macMessage *));
 void runtime_bridge_set_vo_layout(uint32_t size, uint32_t labels, uint32_t groups, uint32_t slots);
 int runtime_bridge_wait_graphics(void);
+int runtime_bridge_fault(uintptr_t address, int is_write);
 int runtime_bridge_is_shared(uintptr_t address, uint64_t size);
 uint64_t runtime_process_start_ns(void); /* runtime_kernel.c: the process clock origin, CLOCK_MONOTONIC */
 /* Windows and macOS: reserves the PS4 user address range (no-op on Linux). */

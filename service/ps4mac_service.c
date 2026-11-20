@@ -27,7 +27,7 @@
 
 static Ps4macSharedBlock *block;
 static int pool_fd = -1, low_fd = -1;
-static unsigned long long maps, unmaps, protects, checks;
+static unsigned long long maps, unmaps, protects, checks, faults;
 static pthread_mutex_t gpu_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t gpu_cond = PTHREAD_COND_INITIALIZER;
 static int gpu_requested;
@@ -38,6 +38,7 @@ int spartanportgpu_service_init(const SpartanGpuConfig *config, void (*reply)(co
 int ps4mac_gfx_server_handle(const Ps4macMessage *m);
 int ps4mac_gfx_server_check_port(uint32_t size, uint32_t labels, uint32_t groups, uint32_t slots);
 int ps4mac_gfx_server_hdr_supported(void);
+int ps4mac_gfx_server_fault(uintptr_t address, int is_write);
 
 /* From any thread: replies (ring thread), interrupts (graphics thread), presents (present thread). */
 static void push_to_guest(const Ps4macMessage *m) {
@@ -45,6 +46,19 @@ static void push_to_guest(const Ps4macMessage *m) {
     if (ps4mac_ring_push(&block->to_guest, m, 2000000000ull))
         fputs("ps4mac_service: the guest does not take messages\n", stderr);
     pthread_mutex_unlock(&to_guest_lock);
+}
+
+/* Page tracking (step 3.4): the guest applies the protection; the video core goes on once it has
+ * (a write the guest makes after this returns faults). Sequences in ring order. */
+static uint32_t protect_sequence;
+static void protect_guest(uintptr_t address, uint64_t size, int read, int write) {
+    pthread_mutex_lock(&to_guest_lock);
+    const uint32_t sequence = ++protect_sequence;
+    const Ps4macMessage m = {.kind = PS4MAC_PROTECT, .sequence = sequence, .a = address, .b = size,
+                             .c = (uint64_t)(read ? 1 : 0) | (uint64_t)(write ? 2 : 0)};
+    const int pushed = !ps4mac_ring_push(&block->to_guest, &m, 2000000000ull);
+    pthread_mutex_unlock(&to_guest_lock);
+    if (pushed) ps4mac_counter_wait(&block->protect_done, sequence, 200000);
 }
 
 static void fail(const char *what) {
@@ -128,6 +142,15 @@ static void handle(const Ps4macMessage *m) {
         ++checks;
         break;
     }
+    case PS4MAC_WRITE_FAULT:
+    case PS4MAC_READ_FAULT: {
+        const int handled = atomic_load(&gfx_ready) &&
+                            ps4mac_gfx_server_fault((uintptr_t)m->a, m->kind == PS4MAC_WRITE_FAULT);
+        block->fault_result[m->sequence % 256] = (uint8_t)handled;
+        ps4mac_counter_set(&block->fault_done, (uint32_t)m->sequence);
+        ++faults;
+        break;
+    }
     case PS4MAC_GFX_SET_VO_PORT:
         if (!ps4mac_gfx_server_check_port(block->vo_port_size, block->vo_labels_offset,
                                           block->vo_groups_offset, block->vo_slots_offset)) {
@@ -137,14 +160,6 @@ static void handle(const Ps4macMessage *m) {
         ps4mac_gfx_server_handle(m);
         break;
     default:
-        if (m->kind == PS4MAC_SUBMIT_DONE) {
-            static int invalidate_all = -1;
-            if (invalidate_all < 0) {
-                const char *e = getenv("PS4MAC_SERVICE_INVALIDATE_ALL");
-                invalidate_all = e && *e == '1';
-            }
-            if (invalidate_all) service_invalidate_all();
-        }
         if (atomic_load(&gfx_ready) && !ps4mac_gfx_server_handle(m))
             fprintf(stderr, "ps4mac_service: unknown message %u\n", m->kind);
         break;
@@ -155,8 +170,8 @@ static void *socket_watch(void *arg) {
     /* The guest side never writes again: EOF means it is gone. */
     char byte;
     while (read((int)(intptr_t)arg, &byte, 1) > 0) { }
-    fprintf(stderr, "ps4mac_service: guest side gone (%llu maps, %llu unmaps, %llu protects, %llu checksums); exiting\n",
-            maps, unmaps, protects, checks);
+    fprintf(stderr, "ps4mac_service: guest side gone (%llu maps, %llu unmaps, %llu protects, %llu faults, "
+            "%llu checksums); exiting\n", maps, unmaps, protects, faults, checks);
     runtime_report();
     _exit(0);
     return NULL;
@@ -180,6 +195,7 @@ static void *gpu_init_thread(void *unused) {
     const SpartanGpuConfig config = {c->title, c->serial, c->user_dir, c->sdk_version, c->psf_attributes,
                                      c->width, c->height};
     const uint64_t start = ps4mac_now_ns();
+    service_set_protect_sender(protect_guest); /* before the video core registers guest memory */
     if (spartanportgpu_service_init(&config, push_to_guest)) {
         fputs("ps4mac_service: video core initialization failed\n", stderr);
         _exit(1);

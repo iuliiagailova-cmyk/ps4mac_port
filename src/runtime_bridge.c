@@ -26,6 +26,7 @@
 #include "../bridge/ps4mac_ring.h"
 
 int runtime_memory_region(uintptr_t address, uintptr_t *start, uintptr_t *end, int *mapped);
+void runtime_memory_gpu_protect(uintptr_t address, uint64_t size, int read, int write);
 
 static Ps4macSharedBlock *block;
 static pid_t service_pid;
@@ -121,6 +122,23 @@ int runtime_bridge_is_shared(uintptr_t address, uint64_t size) {
     return block && address >= block->user_min && address + size <= block->user_max;
 }
 
+/* Step 3.4: a fault on guest memory, for the service's page tracking (the GPU library's fault
+ * handler, gpu/shim/spartanportgpu.cpp). Returns whether it was a page the GPU protects; the
+ * service has then changed the protection, and the access can be retried. */
+static uint32_t fault_sequence;
+int runtime_bridge_fault(uintptr_t address, int is_write) {
+    if (!block || !remote_graphics || !runtime_bridge_is_shared(address, 1)) return 0;
+    pthread_mutex_lock(&push_lock); /* sequences in ring order: the service answers in order */
+    const uint32_t sequence = ++fault_sequence;
+    const Ps4macMessage m = {.kind = is_write ? PS4MAC_WRITE_FAULT : PS4MAC_READ_FAULT,
+                             .sequence = sequence, .a = address};
+    const int pushed = !ps4mac_ring_push(&block->to_graphics, &m, 2000000000ull);
+    pthread_mutex_unlock(&push_lock);
+    if (!pushed) return 0;
+    ps4mac_counter_wait(&block->fault_done, sequence, 200000);
+    return block->fault_result[sequence % 256];
+}
+
 static void *reply_thread(void *unused) {
     (void)unused;
     unsigned ok = 0, bad = 0;
@@ -129,6 +147,12 @@ static void *reply_thread(void *unused) {
         Ps4macMessage m;
         if (!ps4mac_ring_pop(&block->to_guest, &m, 50000, 1000000000ull)) {
             if (!atomic_load(&block->service_alive)) return NULL;
+            continue;
+        }
+        if (m.kind == PS4MAC_PROTECT) {
+            /* The service's page tracking: synchronous for it (it waits for protect_done). */
+            runtime_memory_gpu_protect((uintptr_t)m.a, m.b, (int)(m.c & 1), (int)((m.c >> 1) & 1));
+            ps4mac_counter_set(&block->protect_done, (uint32_t)m.sequence);
             continue;
         }
         if (m.kind != PS4MAC_CHECKSUM_REPLY) {
@@ -287,6 +311,7 @@ void runtime_bridge_start(void) {
 #else
 void runtime_bridge_start(void) {}
 int runtime_bridge_remote_graphics(void) { return 0; }
+int runtime_bridge_fault(uintptr_t address, int is_write) { (void)address; (void)is_write; return 0; }
 int runtime_bridge_gpu_init(const char *title, const char *serial, const char *user_dir, uint32_t sdk_version,
                             uint32_t psf_attributes, int32_t width, int32_t height) {
     (void)title; (void)serial; (void)user_dir; (void)sdk_version; (void)psf_attributes; (void)width; (void)height;

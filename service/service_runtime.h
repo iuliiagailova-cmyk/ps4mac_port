@@ -16,6 +16,7 @@ size_t service_memory_range_count(void);
 void service_set_clock_start(uint64_t ns);
 void service_install_fault_handler(void);
 void runtime_report(void); /* also called by the video core */
-void service_invalidate_all(void);
+typedef void (*ServiceProtect)(uintptr_t address, uint64_t size, int read, int write);
+void service_set_protect_sender(ServiceProtect sender); /* the guest applies page protection */
 
 #endif
