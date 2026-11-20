@@ -1,0 +1,204 @@
+--- a/src/kosmickrisp/vulkan/kk_shader.c	2026-11-20 10:50:58
++++ b/src/kosmickrisp/vulkan/kk_shader.c	2026-11-20 10:50:58
+@@ -20,6 +20,7 @@
+ #include "kosmickrisp/bridge/ns_process_info.h"
+ #include "kosmickrisp/bridge/vk_to_mtl_map.h"
+ #include "kosmickrisp/compiler/nir_to_msl.h"
++#include "util/compress.h"
+ 
+ #include "nir_builder.h"
+ #include "nir_lower_blend.h"
+@@ -857,15 +858,18 @@
+          struct msl_compile_data *data = &shader->msl_data[i];
+          ralloc_free((void *)data->entrypoint_name);
+          ralloc_free((void *)data->code);
++         ralloc_free(data->packed);
+       }
+    }
+ 
+    struct msl_compile_data *data = &shader->msl_data[shader->info.stage];
+    ralloc_free((void *)data->entrypoint_name);
+    ralloc_free((void *)data->code);
++   ralloc_free(data->packed);
+ 
+    ralloc_free((void *)shader->gs_main.entrypoint_name);
+    ralloc_free((void *)shader->gs_main.code);
++   ralloc_free(shader->gs_main.packed);
+ 
+    vk_shader_free(&dev->vk, pAllocator, &shader->vk);
+ }
+@@ -983,6 +987,52 @@
+    return progress;
+ }
+ 
++void
++kk_msl_pack(struct msl_compile_data *data)
++{
++   static int disabled = -1;
++   if (disabled < 0)
++      disabled = getenv("KK_MSL_UNPACKED") != NULL;
++   if (disabled || data->code == NULL || data->packed)
++      return;
++   const size_t size = strlen(data->code) + 1;
++   uint8_t *packed = ralloc_array(NULL, uint8_t, util_compress_max_compressed_len(size));
++   const size_t packed_size =
++      packed ? util_compress_deflate((const uint8_t *)data->code, size, packed,
++                                     util_compress_max_compressed_len(size))
++             : 0;
++   if (packed_size == 0) {
++      ralloc_free(packed);
++      return;
++   }
++   data->packed = reralloc_array_size(NULL, packed, 1, packed_size);
++   data->packed_size = packed_size;
++   data->code_size = size;
++   ralloc_free(data->code);
++   data->code = NULL;
++}
++
++const char *
++kk_msl_code(const struct msl_compile_data *data)
++{
++   if (data->code)
++      return data->code;
++   char *code = malloc(data->code_size);
++   if (code && !util_compress_inflate(data->packed, data->packed_size,
++                                      (uint8_t *)code, data->code_size)) {
++      free(code);
++      return NULL;
++   }
++   return code;
++}
++
++void
++kk_msl_code_done(const struct msl_compile_data *data, const char *code)
++{
++   if (code != data->code)
++      free((void *)code);
++}
++
+ /* Consumes nir */
+ static void
+ kk_compile_msl(struct kk_physical_device *pdev, nir_shader *nir,
+@@ -1031,6 +1081,7 @@
+       mesa_logi("%s\n", data->code);
+ 
+    ralloc_free(nir);
++   kk_msl_pack(data);
+ }
+ 
+ static VkResult
+@@ -1253,9 +1304,11 @@
+ {
+    struct kk_physical_device *pdev = kk_device_physical(device);
+ 
+-   mtl_library *library = mtl_new_library(
+-      device->mtl_compiler_handle, data->code, pdev->info.msl_version,
+-      MTL_MATH_MODE_FAST, MTL_MATH_FLOATING_POINT_FUNCTIONS_FAST);
++   const char *code = kk_msl_code(data);
++   mtl_library *library = code ? mtl_new_library(
++      device->mtl_compiler_handle, code, pdev->info.msl_version,
++      MTL_MATH_MODE_FAST, MTL_MATH_FLOATING_POINT_FUNCTIONS_FAST) : NULL;
++   kk_msl_code_done(data, code);
+    if (library == NULL)
+       return VK_ERROR_INVALID_SHADER_NV;
+ 
+@@ -1375,8 +1428,13 @@
+ static void
+ kk_msl_copy(struct msl_compile_data *dst, const struct msl_compile_data *src)
+ {
+-   dst->code = ralloc_strdup(NULL, src->code);
++   const char *code = kk_msl_code(src);
++   dst->code = code ? ralloc_strdup(NULL, code) : NULL;
++   kk_msl_code_done(src, code);
+    dst->entrypoint_name = ralloc_strdup(NULL, src->entrypoint_name);
++   dst->packed = NULL;
++   dst->packed_size = dst->code_size = 0;
++   kk_msl_pack(dst);
+ }
+ 
+ /* Copies all msl shader data to the vertex and gathers information for pipeline
+@@ -1526,9 +1584,11 @@
+    }
+ 
+    const struct msl_compile_data *vs_data = &vs->msl_data[vs_stage];
+-   mtl_library *vertex_library = mtl_new_library(
+-      device->mtl_compiler_handle, vs_data->code, pdev->info.msl_version,
+-      MTL_MATH_MODE_FAST, MTL_MATH_FLOATING_POINT_FUNCTIONS_FAST);
++   const char *vs_code = kk_msl_code(vs_data);
++   mtl_library *vertex_library = vs_code ? mtl_new_library(
++      device->mtl_compiler_handle, vs_code, pdev->info.msl_version,
++      MTL_MATH_MODE_FAST, MTL_MATH_FLOATING_POINT_FUNCTIONS_FAST) : NULL;
++   kk_msl_code_done(vs_data, vs_code);
+    if (vertex_library == NULL)
+       return VK_ERROR_INVALID_SHADER_NV;
+ 
+@@ -1537,9 +1597,11 @@
+                                           vs_data->entrypoint_name);
+ 
+    const struct msl_compile_data *fs_data = &vs->msl_data[MESA_SHADER_FRAGMENT];
+-   mtl_library *fragment_library = mtl_new_library(
+-      device->mtl_compiler_handle, fs_data->code, pdev->info.msl_version,
+-      MTL_MATH_MODE_FAST, MTL_MATH_FLOATING_POINT_FUNCTIONS_FAST);
++   const char *fs_code = kk_msl_code(fs_data);
++   mtl_library *fragment_library = fs_code ? mtl_new_library(
++      device->mtl_compiler_handle, fs_code, pdev->info.msl_version,
++      MTL_MATH_MODE_FAST, MTL_MATH_FLOATING_POINT_FUNCTIONS_FAST) : NULL;
++   kk_msl_code_done(fs_data, fs_code);
+    if (fragment_library == NULL) {
+       result = VK_ERROR_INVALID_SHADER_NV;
+       goto destroy_vertex;
+@@ -1839,12 +1901,18 @@
+ static void
+ kk_msl_serialize(const struct msl_compile_data *data, struct blob *blob)
+ {
++   const char *code = kk_msl_code(data);
++   if (code == NULL) {
++      blob->out_of_memory = true;
++      return;
++   }
+    uint32_t entrypoint_length = strlen(data->entrypoint_name) + 1;
+-   uint32_t code_length = strlen(data->code) + 1;
++   uint32_t code_length = strlen(code) + 1;
+    blob_write_uint32(blob, entrypoint_length);
+    blob_write_uint32(blob, code_length);
+    blob_write_bytes(blob, data->entrypoint_name, entrypoint_length);
+-   blob_write_bytes(blob, data->code, code_length);
++   blob_write_bytes(blob, code, code_length);
++   kk_msl_code_done(data, code);
+ }
+ 
+ static bool
+@@ -1885,6 +1953,9 @@
+    if (blob->overrun)
+       return VK_ERROR_INCOMPATIBLE_SHADER_BINARY_EXT;
+ 
++   data->packed = NULL;
++   data->packed_size = data->code_size = 0;
++   kk_msl_pack(data);
+    return VK_SUCCESS;
+ }
+ 
+--- a/src/kosmickrisp/vulkan/kk_shader.h	2026-11-20 10:50:58
++++ b/src/kosmickrisp/vulkan/kk_shader.h	2026-11-20 10:50:58
+@@ -134,9 +134,20 @@
+ };
+ 
+ struct msl_compile_data {
++   /* spartanport: NULL while packed; kk_msl_code() gives the text. */
+    char *code;
+    char *entrypoint_name;
++   /* spartanport: the MSL text deflated (it is only needed again to build another pipeline
++    * from this shader or to serialize it): ~900 MB of text stayed in memory otherwise. */
++   uint8_t *packed;
++   uint32_t packed_size;
++   uint32_t code_size; /* strlen + 1 */
+ };
++
++void kk_msl_pack(struct msl_compile_data *data);
++/* The MSL text; free it with kk_msl_code_done(). */
++const char *kk_msl_code(const struct msl_compile_data *data);
++void kk_msl_code_done(const struct msl_compile_data *data, const char *code);
+ 
+ struct kk_shader {
+    struct vk_shader vk;

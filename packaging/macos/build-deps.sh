@@ -59,7 +59,8 @@ if ! step vulkan; then
 fi
 # spartanport-1: performance fixes for this game under Rosetta 2 (kosmickrisp-spartanport.patch and the
 # compiler flag below); a dependency folder built before them rebuilds the driver.
-if ! step kosmickrisp || ! step kosmickrisp-spartanport-1; then
+# rncport-3: shader MSL text kept deflated (kosmickrisp-msl-packed.patch).
+if ! step kosmickrisp || ! step kosmickrisp-spartanport-1 || ! step kosmickrisp-rncport-3; then
     # Mesa's build runs Python with mako: meson comes from a private virtual environment.
     [[ -x $prefix/venv/bin/meson ]] || {
         python3 -m venv "$prefix/venv"
@@ -76,6 +77,10 @@ if ! step kosmickrisp || ! step kosmickrisp-spartanport-1; then
     mesa=$src/mesa-kosmickrisp/externals/mesa
     if ! git -C "$mesa" apply --reverse --check "$PWD/packaging/macos/kosmickrisp-spartanport.patch" 2>/dev/null; then
         git -C "$mesa" apply "$PWD/packaging/macos/kosmickrisp-spartanport.patch"
+    fi
+    # Every shader kept its MSL text, ~900 MB in Ratchet & Clank: it is now stored deflated.
+    if ! git -C "$mesa" apply --reverse --check "$PWD/packaging/macos/kosmickrisp-msl-packed.patch" 2>/dev/null; then
+        git -C "$mesa" apply "$PWD/packaging/macos/kosmickrisp-msl-packed.patch"
     fi
     # Apple clang's hot/cold splitting marks hot driver functions (per-draw descriptor uploads)
     # minsize, which turns their memcpy into `rep movsb`: Rosetta 2 runs that ~12x slower.
@@ -94,6 +99,7 @@ if ! step kosmickrisp || ! step kosmickrisp-spartanport-1; then
         "$src/mesa-kosmickrisp/build/outputs/kosmickrisp_mesa_icd.json" > "$prefix/share/vulkan/icd.d/kosmickrisp_mesa_icd.json"
     done_step kosmickrisp
     done_step kosmickrisp-spartanport-1
+    done_step kosmickrisp-rncport-3
 fi
 if ! step sdl3; then
     [[ -d $src/SDL3-$SDL ]] ||
