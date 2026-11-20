@@ -232,6 +232,8 @@ def main():
     graphics, reverted = graphics_options.prepare(env['SPARTAN_CONFIG'], out / 'graphics_state.json', extra_resolutions)
     if reverted:
         print('Graphics: the last restart never reached the game; previous options restored', flush=True)
+    # Readback modes set explicitly in the environment (RnCPort tests) win over the defaults below.
+    explicit_readback = {k: env[k] for k in ('SPARTAN_DEFERRED_READBACK', 'SPARTAN_STALE_READBACK') if k in env}
     env.update(graphics_options.environment(graphics))
     # RnCPort: the project name in the window title and the in-game menu.
     env.setdefault('SPARTAN_APP_NAME', 'RnCPort')
@@ -256,7 +258,10 @@ def main():
         for key, name in (('deferred_readback', 'SPARTAN_DEFERRED_READBACK'),
                           ('stale_readback', 'SPARTAN_STALE_READBACK')):
             if key not in ini:
-                env[name] = '0'
+                env[name] = explicit_readback.get(name, '0')
+        # Submit every 100 draws/dispatches: the GPU starts while the frame is still recorded
+        # (first level on an M1: 5.8 -> 7.9 FPS; 30 and 300 were slower).
+        env.setdefault('SPARTAN_FLUSH_DRAWS', '100')
         print(f"Readback: deferred={env['SPARTAN_DEFERRED_READBACK']}, stale={env['SPARTAN_STALE_READBACK']} (CUSA01047 default: precise)", flush=True)
     if not env.get('SPARTAN_FSR411_DIR') and not (PORT / 'fsr4_411').is_dir() and (data / 'fsr4_411').is_dir():
         env['SPARTAN_FSR411_DIR'] = str(data / 'fsr4_411')

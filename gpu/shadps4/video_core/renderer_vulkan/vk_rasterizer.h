@@ -142,6 +142,9 @@ public:
     void UnmapMemory(VAddr addr, u64 size);
 
     u64 Flush();
+    /// spartanport: SPARTAN_FLUSH_DRAWS (see vk_rasterizer.cpp).
+    void MaybeAutoFlush();
+    u32 work_since_flush = 0;
     void Finish();
     void OnSubmit();
 

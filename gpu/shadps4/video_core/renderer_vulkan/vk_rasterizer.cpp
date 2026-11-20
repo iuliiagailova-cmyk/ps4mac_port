@@ -976,9 +976,26 @@ bool Rasterizer::FilterDrawPasses() const {
     return !(mode == Mode::Disable && (depth_copy || stencil_copy));
 }
 
+// spartanport: SPARTAN_FLUSH_DRAWS=N submits the command buffer every N draws and dispatches.
+// A frame was otherwise recorded into one or two command buffers: the GPU started it only once
+// the whole frame was recorded (~95 ms later in Ratchet & Clank's levels), and the CPU then
+// waited for all of it at its next write to GPU-written memory.
+void Rasterizer::MaybeAutoFlush() {
+    static const u32 every = [] {
+        const char* env = std::getenv("SPARTAN_FLUSH_DRAWS");
+        return env ? static_cast<u32>(std::strtoul(env, nullptr, 10)) : 0u;
+    }();
+    if (every == 0 || ++work_since_flush < every) {
+        return;
+    }
+    work_since_flush = 0;
+    Flush();
+}
+
 void Rasterizer::Draw(bool is_indexed, u32 index_offset, const PreparedDraw* prepared) {
     RENDERER_TRACE;
     SpartanStats::draws.fetch_add(1, std::memory_order_relaxed);
+    MaybeAutoFlush();
 
     // spartanport: with the draw pipeline this thread only selects the pipeline and hands the draw
     // to the recording thread (DrawRecord there); draws FilterDraw handles itself run here.
@@ -1423,6 +1440,7 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
 void Rasterizer::DispatchDirect() {
     RENDERER_TRACE;
     SpartanStats::dispatches.fetch_add(1, std::memory_order_relaxed);
+    MaybeAutoFlush();
     // spartanport: like draws, handed to the draw recording thread after the pipeline selection.
     const bool pipelined = UseDrawPipe() && !SpartanToggle::Disabled(SpartanToggle::PipelinedDispatch);
     if (!pipelined) {
@@ -1571,6 +1589,7 @@ void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr a
 }
 
 u64 Rasterizer::Flush() {
+    work_since_flush = 0;
     DrainDrawPipe();
     const u64 current_tick = scheduler.CurrentTick();
     SubmitInfo info{};
