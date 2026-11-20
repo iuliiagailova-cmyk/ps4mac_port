@@ -251,18 +251,20 @@ def main():
             env.setdefault('SPARTAN_STAGING_LARGE_IDLE_MS', '3000')
             env.setdefault('SPARTAN_STAGING_LARGE_KEEP_MB', '256')
             print('Memory: 8 GB Mac, upload buffers kept small (SPARTAN_STAGING_*)')
-    # Ratchet & Clank (CUSA01047) waits on GPU results in memory (a busy loop until the GPU has
-    # written them): it needs precise readbacks, unless its spartanport.ini says otherwise.
+    # Ratchet & Clank (CUSA01047): stale readbacks like God of War III (the game reads GPU
+    # results every frame; waiting for them serialized CPU and GPU). They hung its loading until
+    # readbacks were published when the GPU completes them. Known: rare green vertical bars over
+    # fire for half a second (stale or not, to be checked). Readback modes given in the
+    # environment still win over spartanport.ini.
     ini = graphics_options.read_ini(env['SPARTAN_CONFIG'])
     if patches.game_title_id(env.get('SPARTAN_GAME_DIR', DEFAULT_GAME_DIR)) == 'CUSA01047':
-        for key, name in (('deferred_readback', 'SPARTAN_DEFERRED_READBACK'),
-                          ('stale_readback', 'SPARTAN_STALE_READBACK')):
-            if key not in ini:
-                env[name] = explicit_readback.get(name, '0')
+        for name in ('SPARTAN_DEFERRED_READBACK', 'SPARTAN_STALE_READBACK'):
+            if name in explicit_readback:
+                env[name] = explicit_readback[name]
         # Submit every 100 draws/dispatches: the GPU starts while the frame is still recorded
         # (first level on an M1: 5.8 -> 7.9 FPS; 30 and 300 were slower).
         env.setdefault('SPARTAN_FLUSH_DRAWS', '100')
-        print(f"Readback: deferred={env['SPARTAN_DEFERRED_READBACK']}, stale={env['SPARTAN_STALE_READBACK']} (CUSA01047 default: precise)", flush=True)
+        print(f"Readback: deferred={env['SPARTAN_DEFERRED_READBACK']}, stale={env['SPARTAN_STALE_READBACK']} (CUSA01047 default: stale)", flush=True)
     if not env.get('SPARTAN_FSR411_DIR') and not (PORT / 'fsr4_411').is_dir() and (data / 'fsr4_411').is_dir():
         env['SPARTAN_FSR411_DIR'] = str(data / 'fsr4_411')
 

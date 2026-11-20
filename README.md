@@ -63,7 +63,7 @@ The game profile (patch `Bug Fix - Address Space Base`, precise readbacks) is ap
 - **Address space patch** ([`patches/CUSA01047.xml`](patches/CUSA01047.xml)). The game's own virtual address allocator hands out 2 GiB slots from `0x1000000000`, inside the range macOS reserves in every process (`0xfc0000000…0x7000000000`, also under Rosetta 2), and relies on the kernel honouring that address. The base moves to `0x8000000000` (4 instructions), its inverse with it (3) and the slot count from 472 to 248 (4). The other 59 uses of `0x1000000000` in the executable are feature flag masks and stay untouched. shadPS4 already ships the same base move for version 01.09 ("macOS Memory Workaround" by squidbus in [shadps4-emu/ps4_cheats](https://github.com/shadps4-emu/ps4_cheats/blob/main/PATCHES/Ratchet_and_Clank.xml)); this patch is for 01.00 and also adjusts the inverse and the slot count so that the slots stay below the 40-bit GPU address limit.
 - **~140 runtime functions** the game needs beyond God of War III: event flags and POSIX semaphores, thread scheduling parameters, time conversions, RFC 3339/2822 date parsing, and offline PSN services, dialogs, sockets and PlayGo.
 - **Runtime fixes:** the thread handle starts with a non-zero thread id (the game reads it right after `pthread_create`), timed waits carry a deadline of exactly one second, GPU commands may carry more than 128 KiB of data, the queue of GPU memory notifications grows as needed.
-- **Precise readbacks by default** for this game: it busy-waits until the GPU has written results to memory.
+- **Stale readbacks** (the game reads the previous frame's GPU results, as in God of War III): they now reach guest memory as soon as the GPU completes them, which also fixed a hang while loading. `SPARTAN_STALE_READBACK=0 SPARTAN_DEFERRED_READBACK=0` gives precise readbacks.
 - **Earlier GPU start:** the command buffer is submitted every 100 draws or dispatches (`SPARTAN_FLUSH_DRAWS`), so the GPU starts while the frame is still recorded; GPU-written buffers are read back from mapped memory without waiting for the whole GPU. First level on an M1: 5.8 → 7.9 FPS.
 - **GPU memory on 8 GB Macs:** large upload buffers are freed after a few seconds idle instead of after 3000 frames (never, at 1 FPS); about 1.9 GB of idle staging took the first level from ~1 FPS to 30 FPS.
 - **PRT apertures** are mapped for the GPU, as in shadPS4.
@@ -73,6 +73,7 @@ The game profile (patch `Bug Fix - Address Space Base`, precise readbacks) is ap
 
 - **Memory on 8 GB Macs.** GPU memory is about 3.5–4 GB in the first level and macOS swaps; gameplay runs at about 7–10 FPS. The GPU layer still keeps copies of guest memory in Vulkan buffers (~1.2 GB) and a 512 MB address table.
 - **Occasional crashes in the level** (inside Metal when the driver opens an encoder, or in `Scheduler::BeginRendering`), after one to a few minutes. Not found yet; a Metal 4 allocator reset was tried and measured, and it is not the cause.
+- **Green vertical bars over fire** for half a second, rarely (seen once, with stale readbacks; not yet checked without them).
 - **Occasional black screen at start** (a race between threads, not yet found).
 - Only the EU base game is tested.
 
