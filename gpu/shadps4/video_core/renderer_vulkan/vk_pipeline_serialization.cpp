@@ -54,7 +54,13 @@ u32 CurrentShaderBinaryVersion() {
 // ps4mac_port: shader metadata holds the SRT walker, x86-64 code or bytecode; each format has its
 // own metadata version, so an entry of the other one is stale and rebuilt.
 u32 CurrentShaderMetaVersion() {
-    return Serialization::ShaderMetaVersion + (Shader::SrtBytecode::Enabled() ? 0x10000u : 0u);
+    // ps4mac_port: shaders with their own buffer bounds checks (SPARTAN_SHADER_BOUNDS) differ.
+    static const u32 bounds = [] {
+        const char* env = std::getenv("SPARTAN_SHADER_BOUNDS");
+        return !env ? 0u : env[0] == '1' ? 0x20000u : env[0] == 'w' ? 0x40000u : 0u;
+    }();
+    return Serialization::ShaderMetaVersion + (Shader::SrtBytecode::Enabled() ? 0x10000u : 0u) +
+           bounds;
 }
 } // namespace
 

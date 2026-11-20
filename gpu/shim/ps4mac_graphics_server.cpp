@@ -259,10 +259,18 @@ extern "C" int ps4mac_gfx_server_fault(uintptr_t address, int is_write) {
     auto& rasterizer = presenter->GetRasterizer();
     if (is_write) {
         SpartanStats::Timer timer{SpartanStats::t_write_faults};
-        // Step 3.6: faults on pages the GPU wrote (they download first, on the graphics thread),
-        // timed apart from the others.
-        rasterizer.DrainDrawPipe();
-        const bool gpu_modified = rasterizer.IsRegionGpuModified(VAddr(address), 8);
+        // Step 3.6 measurement (PS4MAC_FAULT_STATS=1): faults on pages the GPU wrote (they
+        // download first, on the graphics thread), timed apart from the others. Off by default:
+        // the query reads the buffer cache's page state without its locks.
+        static const bool fault_stats = [] {
+            const char* env = std::getenv("PS4MAC_FAULT_STATS");
+            return env && env[0] == '1';
+        }();
+        bool gpu_modified = false;
+        if (fault_stats) {
+            rasterizer.DrainDrawPipe();
+            gpu_modified = rasterizer.IsRegionGpuModified(VAddr(address), 8);
+        }
         const auto start = std::chrono::steady_clock::now();
         const int handled = rasterizer.OnWriteFault(VAddr(address), false) ? 1 : 0;
         if (gpu_modified) {

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <tuple>
 #include "common/assert.h"
 #include "core/emulator_settings.h"
 #include "shader_recompiler/backend/spirv/emit_spirv_instructions.h"
@@ -406,11 +407,20 @@ static Id EmitLoadBufferB32xN(EmitContext& ctx, IR::Inst* inst, u32 handle, Id a
     const auto& data_types = alias == PointerType::U32 ? ctx.U32 : ctx.F32;
     const auto [id, pointer_type] = spv_buffer.Alias(alias);
 
+    const bool bounds = EmitContext::ShaderBoundsReads() && spv_buffer.buffer_type == BufferType::Guest;
+    const Id zero = alias == PointerType::U32 ? ctx.u32_zero_value : ctx.f32_zero_value;
     boost::container::static_vector<Id, N> ids;
     for (u32 i = 0; i < N; i++) {
-        const Id index_i = i == 0 ? address : ctx.OpIAdd(ctx.U32[1], address, ctx.ConstU32(i));
+        Id index_i = i == 0 ? address : ctx.OpIAdd(ctx.U32[1], address, ctx.ConstU32(i));
+        Id in_bounds{};
+        if (bounds) {
+            std::tie(in_bounds, index_i) = ctx.BoundIndex(id, index_i);
+        }
         const Id ptr_i = ctx.OpAccessChain(pointer_type, id, ctx.u32_zero_value, index_i);
-        const Id result_i = ctx.OpLoad(data_types[1], ptr_i);
+        Id result_i = ctx.OpLoad(data_types[1], ptr_i);
+        if (bounds) {
+            result_i = ctx.OpSelect(data_types[1], in_bounds, result_i, zero);
+        }
         ids.push_back(result_i);
     }
 
@@ -424,6 +434,11 @@ Id EmitLoadBufferU8(EmitContext& ctx, IR::Inst* inst, u32 handle, Id address) {
         address = ctx.OpIAdd(ctx.U32[1], address, offset);
     }
     const auto [id, pointer_type] = spv_buffer.Alias(PointerType::U8);
+    if (EmitContext::ShaderBoundsReads() && spv_buffer.buffer_type == BufferType::Guest) {
+        const auto [in_bounds, safe_index] = ctx.BoundIndex(id, address);
+        const Id loaded{ctx.OpLoad(ctx.U8, ctx.OpAccessChain(pointer_type, id, ctx.u32_zero_value, safe_index))};
+        return ctx.OpSelect(ctx.U8, in_bounds, loaded, ctx.Constant(ctx.U8, 0u));
+    }
     const Id ptr{ctx.OpAccessChain(pointer_type, id, ctx.u32_zero_value, address)};
     const Id result{ctx.OpLoad(ctx.U8, ptr)};
     return result;
@@ -435,6 +450,11 @@ Id EmitLoadBufferU16(EmitContext& ctx, IR::Inst* inst, u32 handle, Id address) {
         address = ctx.OpIAdd(ctx.U32[1], address, offset);
     }
     const auto [id, pointer_type] = spv_buffer.Alias(PointerType::U16);
+    if (EmitContext::ShaderBoundsReads() && spv_buffer.buffer_type == BufferType::Guest) {
+        const auto [in_bounds, safe_index] = ctx.BoundIndex(id, address);
+        const Id loaded{ctx.OpLoad(ctx.U16, ctx.OpAccessChain(pointer_type, id, ctx.u32_zero_value, safe_index))};
+        return ctx.OpSelect(ctx.U16, in_bounds, loaded, ctx.Constant(ctx.U16, 0u));
+    }
     const Id ptr{ctx.OpAccessChain(pointer_type, id, ctx.u32_zero_value, address)};
     const Id result{ctx.OpLoad(ctx.U16, ptr)};
     return result;
@@ -462,6 +482,11 @@ Id EmitLoadBufferU64(EmitContext& ctx, IR::Inst* inst, u32 handle, Id address) {
         address = ctx.OpIAdd(ctx.U32[1], address, offset);
     }
     const auto [id, pointer_type] = spv_buffer.Alias(PointerType::U64);
+    if (EmitContext::ShaderBoundsReads() && spv_buffer.buffer_type == BufferType::Guest) {
+        const auto [in_bounds, safe_index] = ctx.BoundIndex(id, address);
+        const Id loaded{ctx.OpLoad(ctx.U64, ctx.OpAccessChain(pointer_type, id, ctx.u64_zero_value, safe_index))};
+        return ctx.OpSelect(ctx.U64, in_bounds, loaded, ctx.u64_zero_value);
+    }
     const Id ptr{ctx.OpAccessChain(pointer_type, id, ctx.u64_zero_value, address)};
     const Id result{ctx.OpLoad(ctx.U64, ptr)};
     return result;
@@ -497,10 +522,19 @@ static void EmitStoreBufferB32xN(EmitContext& ctx, IR::Inst* inst, u32 handle, I
     const auto& data_types = alias == PointerType::U32 ? ctx.U32 : ctx.F32;
     const auto [id, pointer_type] = spv_buffer.Alias(alias);
 
+    const bool bounds = EmitContext::ShaderBounds() && spv_buffer.buffer_type == BufferType::Guest;
     for (u32 i = 0; i < N; i++) {
         const Id index_i = i == 0 ? address : ctx.OpIAdd(ctx.U32[1], address, ctx.ConstU32(i));
-        const Id ptr_i = ctx.OpAccessChain(pointer_type, id, ctx.u32_zero_value, index_i);
         const Id value_i = N == 1 ? value : ctx.OpCompositeExtract(data_types[1], value, i);
+        if (bounds) {
+            const auto [in_bounds, safe_index] = ctx.BoundIndex(id, index_i);
+            ctx.Guarded(in_bounds, [&] {
+                ctx.OpStore(ctx.OpAccessChain(pointer_type, id, ctx.u32_zero_value, safe_index),
+                            value_i);
+            });
+            continue;
+        }
+        const Id ptr_i = ctx.OpAccessChain(pointer_type, id, ctx.u32_zero_value, index_i);
         ctx.OpStore(ptr_i, value_i);
     }
 }
@@ -511,6 +545,13 @@ void EmitStoreBufferU8(EmitContext& ctx, IR::Inst*, u32 handle, Id address, Id v
         address = ctx.OpIAdd(ctx.U32[1], address, offset);
     }
     const auto [id, pointer_type] = spv_buffer.Alias(PointerType::U8);
+    if (EmitContext::ShaderBounds() && spv_buffer.buffer_type == BufferType::Guest) {
+        const auto [in_bounds, safe_index] = ctx.BoundIndex(id, address);
+        ctx.Guarded(in_bounds, [&] {
+            ctx.OpStore(ctx.OpAccessChain(pointer_type, id, ctx.u32_zero_value, safe_index), value);
+        });
+        return;
+    }
     const Id ptr{ctx.OpAccessChain(pointer_type, id, ctx.u32_zero_value, address)};
     ctx.OpStore(ptr, value);
 }
@@ -521,6 +562,13 @@ void EmitStoreBufferU16(EmitContext& ctx, IR::Inst*, u32 handle, Id address, Id 
         address = ctx.OpIAdd(ctx.U32[1], address, offset);
     }
     const auto [id, pointer_type] = spv_buffer.Alias(PointerType::U16);
+    if (EmitContext::ShaderBounds() && spv_buffer.buffer_type == BufferType::Guest) {
+        const auto [in_bounds, safe_index] = ctx.BoundIndex(id, address);
+        ctx.Guarded(in_bounds, [&] {
+            ctx.OpStore(ctx.OpAccessChain(pointer_type, id, ctx.u32_zero_value, safe_index), value);
+        });
+        return;
+    }
     const Id ptr{ctx.OpAccessChain(pointer_type, id, ctx.u32_zero_value, address)};
     ctx.OpStore(ptr, value);
 }
@@ -547,6 +595,13 @@ void EmitStoreBufferU64(EmitContext& ctx, IR::Inst*, u32 handle, Id address, Id 
         address = ctx.OpIAdd(ctx.U32[1], address, offset);
     }
     const auto [id, pointer_type] = spv_buffer.Alias(PointerType::U64);
+    if (EmitContext::ShaderBounds() && spv_buffer.buffer_type == BufferType::Guest) {
+        const auto [in_bounds, safe_index] = ctx.BoundIndex(id, address);
+        ctx.Guarded(in_bounds, [&] {
+            ctx.OpStore(ctx.OpAccessChain(pointer_type, id, ctx.u64_zero_value, safe_index), value);
+        });
+        return;
+    }
     const Id ptr{ctx.OpAccessChain(pointer_type, id, ctx.u64_zero_value, address)};
     ctx.OpStore(ptr, value);
 }

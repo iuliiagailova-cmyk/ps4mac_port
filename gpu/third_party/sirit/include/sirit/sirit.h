@@ -370,6 +370,10 @@ public:
     /// Create a pointer into a composite object that can be used with OpLoad and OpStore.
     Id OpAccessChain(Id result_type, Id base, std::span<const Id> indexes = {});
 
+    /// Length of the run-time array that is the last member of the structure `structure` points
+    /// to (ps4mac_port: bounds checks of guest buffers).
+    Id OpArrayLength(Id result_type, Id structure, std::uint32_t array_member);
+
     /// Create a pointer into a composite object that can be used with OpLoad and OpStore.
     template <typename... Ts>
     requires(...&& std::is_convertible_v<Ts, Id>) Id

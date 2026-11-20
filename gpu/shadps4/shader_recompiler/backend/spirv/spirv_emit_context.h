@@ -3,6 +3,9 @@
 
 #pragma once
 
+#include <cstdlib>
+#include <utility>
+
 #include <array>
 #include <unordered_map>
 #include <sirit/sirit.h>
@@ -142,6 +145,57 @@ public:
     inline Id AddLabel(Id label) {
         last_label = Module::AddLabel(label);
         return last_label;
+    }
+
+    /// ps4mac_port: SPARTAN_SHADER_BOUNDS=1: guest buffer accesses check their own bounds
+    /// (OpArrayLength of the binding) with GCN's rules - reads past the end return 0, writes and
+    /// atomics there are dropped - so the driver's robust buffer access can be off.
+    /// SPARTAN_SHADER_BOUNDS=writes checks only stores and atomics (no write past the end;
+    /// reads there return nearby data instead of 0).
+    static bool ShaderBounds() {
+        static const bool enabled = [] {
+            const char* env = std::getenv("SPARTAN_SHADER_BOUNDS");
+            return env && (env[0] == '1' || env[0] == 'w');
+        }();
+        return enabled;
+    }
+    static bool ShaderBoundsReads() {
+        static const bool enabled = [] {
+            const char* env = std::getenv("SPARTAN_SHADER_BOUNDS");
+            return env && env[0] == '1';
+        }();
+        return enabled;
+    }
+    /// {in bounds, index to access}: the index is 0 when out of bounds (no access past the end).
+    std::pair<Id, Id> BoundIndex(Id buffer_var, Id index) {
+        const Id length = OpArrayLength(U32[1], buffer_var, 0u);
+        const Id in_bounds = OpULessThan(U1[1], index, length);
+        return {in_bounds, OpSelect(U32[1], in_bounds, index, u32_zero_value)};
+    }
+    /// Runs `body` only when `condition` holds (a store past the end is dropped).
+    void Guarded(Id condition, auto&& body) {
+        const Id body_label = OpLabel();
+        const Id merge_label = OpLabel();
+        OpSelectionMerge(merge_label, spv::SelectionControlMask::MaskNone);
+        OpBranchConditional(condition, body_label, merge_label);
+        AddLabel(body_label);
+        body();
+        OpBranch(merge_label);
+        AddLabel(merge_label);
+    }
+    /// The value of `body` when `condition` holds, else `otherwise` (an atomic past the end).
+    Id GuardedValue(Id condition, Id type, Id otherwise, auto&& body) {
+        const Id from_label = last_label;
+        const Id body_label = OpLabel();
+        const Id merge_label = OpLabel();
+        OpSelectionMerge(merge_label, spv::SelectionControlMask::MaskNone);
+        OpBranchConditional(condition, body_label, merge_label);
+        AddLabel(body_label);
+        const Id value = body();
+        const Id body_end = last_label;
+        OpBranch(merge_label);
+        AddLabel(merge_label);
+        return OpPhi(type, value, body_end, otherwise, from_label);
     }
 
     Id EmitDwordMemoryRead(Id address, auto&& fallback) {

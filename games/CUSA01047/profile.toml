@@ -24,14 +24,17 @@ SPARTAN_FLUSH_DRAWS = "100"
 # AcquireMem) instead of breaking the pass: ~25 fewer render passes a frame on the tiled M1 GPU
 # (level 10.7 -> 13.7 FPS, fight 9.4 -> 11.6; service mode 10.8 -> 13.4, 10.3 -> 12.7).
 SPARTAN_GUEST_SYNC_BARRIERS = "1"
-# No driver bounds checks on buffer accesses (robustBufferAccess/2 off): KosmicKrisp's checks cost
-# ~15% of the frame (level 13.9 -> 16.3 FPS, fight 12.7 -> 14.3; frames checked). Image checks stay.
+# No driver bounds checks on buffer accesses (robustBufferAccess/2 off): checking every access costs
+# ~15% of the frame. The recompiled shaders check their own stores and atomics instead (GCN drops
+# them past the end): level 13.8 -> 15.8 FPS, fight 12.7 -> 14.7 (service mode, frames checked).
+# Image checks stay.
 SPARTAN_NO_ROBUSTNESS = "buffer"
+SPARTAN_SHADER_BOUNDS = "writes"
 
 [known_issues]
 fire_green_bars = "Rare green vertical bars over fire for half a second (seen once with stale readbacks)"
 start_black_screen = "Occasional black screen at start (a race, not found yet)"
-buffer_bounds = "Buffer reads and writes past a buffer's range are not checked (SPARTAN_NO_ROBUSTNESS=buffer): reads return nearby data instead of 0, writes may land in other data. None seen in the first level and fight; remove the line if a scene shows corruption"
+buffer_bounds = "Buffer reads past a buffer's range are not checked (SPARTAN_NO_ROBUSTNESS=buffer with SPARTAN_SHADER_BOUNDS=writes): they return nearby data instead of 0 (writes are checked). None seen in the first level and fight; set SPARTAN_SHADER_BOUNDS to 1 (all accesses checked, ~13% slower) if a scene shows garbage"
 
 [test]
 # Autotest (autotest/drive.py): title screen -> Continue, seconds after launch.

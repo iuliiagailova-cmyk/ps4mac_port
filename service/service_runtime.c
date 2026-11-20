@@ -18,6 +18,7 @@
 #include <sys/mman.h>
 #include <time.h>
 #include <unistd.h>
+#include <execinfo.h>
 
 #include "service_runtime.h"
 
@@ -235,6 +236,10 @@ static void on_fault(int sig, siginfo_t *info, void *context) {
     char line[128];
     const int n = snprintf(line, sizeof(line), "ps4mac_service: fatal signal %d at %p\n", sig, info->si_addr);
     (void)!write(2, line, (size_t)n);
+    /* The faulting thread's stack (the process is ending: not async-signal-safe, acceptable). */
+    void *frames[48];
+    const int depth = backtrace(frames, 48);
+    backtrace_symbols_fd(frames, depth, 2);
     signal(sig, SIG_DFL);
     raise(sig);
 }

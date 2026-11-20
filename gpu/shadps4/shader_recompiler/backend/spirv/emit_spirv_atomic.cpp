@@ -79,8 +79,15 @@ Id BufferAtomicU32(EmitContext& ctx, IR::Inst* inst, u32 handle, Id address, Id 
         address = ctx.OpIAdd(ctx.U32[1], address, offset);
     }
     const auto [id, pointer_type] = buffer.Alias(is_float ? PointerType::F32 : PointerType::U32);
-    const Id ptr = ctx.OpAccessChain(pointer_type, id, ctx.u32_zero_value, address);
     const auto [scope, semantics]{AtomicArgs(ctx)};
+    if (EmitContext::ShaderBounds() && buffer.buffer_type == BufferType::Guest) {
+        const auto [in_bounds, safe_index] = ctx.BoundIndex(id, address);
+        return ctx.GuardedValue(in_bounds, type, is_float ? ctx.f32_zero_value : ctx.u32_zero_value, [&] {
+            const Id ptr = ctx.OpAccessChain(pointer_type, id, ctx.u32_zero_value, safe_index);
+            return (ctx.*atomic_func)(type, ptr, scope, semantics, value);
+        });
+    }
+    const Id ptr = ctx.OpAccessChain(pointer_type, id, ctx.u32_zero_value, address);
     return (ctx.*atomic_func)(type, ptr, scope, semantics, value);
 }
 
@@ -91,8 +98,15 @@ Id BufferAtomicU32IncDec(EmitContext& ctx, IR::Inst* inst, u32 handle, Id addres
         address = ctx.OpIAdd(ctx.U32[1], address, offset);
     }
     const auto [id, pointer_type] = buffer.Alias(PointerType::U32);
-    const Id ptr = ctx.OpAccessChain(pointer_type, id, ctx.u32_zero_value, address);
     const auto [scope, semantics]{AtomicArgs(ctx)};
+    if (EmitContext::ShaderBounds() && buffer.buffer_type == BufferType::Guest) {
+        const auto [in_bounds, safe_index] = ctx.BoundIndex(id, address);
+        return ctx.GuardedValue(in_bounds, ctx.U32[1], ctx.u32_zero_value, [&] {
+            const Id ptr = ctx.OpAccessChain(pointer_type, id, ctx.u32_zero_value, safe_index);
+            return (ctx.*atomic_func)(ctx.U32[1], ptr, scope, semantics);
+        });
+    }
+    const Id ptr = ctx.OpAccessChain(pointer_type, id, ctx.u32_zero_value, address);
     return (ctx.*atomic_func)(ctx.U32[1], ptr, scope, semantics);
 }
 
@@ -104,8 +118,15 @@ Id BufferAtomicU32CmpSwap(EmitContext& ctx, IR::Inst* inst, u32 handle, Id addre
         address = ctx.OpIAdd(ctx.U32[1], address, offset);
     }
     const auto [id, pointer_type] = buffer.Alias(PointerType::U32);
-    const Id ptr = ctx.OpAccessChain(pointer_type, id, ctx.u32_zero_value, address);
     const auto [scope, semantics]{AtomicArgs(ctx)};
+    if (EmitContext::ShaderBounds() && buffer.buffer_type == BufferType::Guest) {
+        const auto [in_bounds, safe_index] = ctx.BoundIndex(id, address);
+        return ctx.GuardedValue(in_bounds, ctx.U32[1], ctx.u32_zero_value, [&] {
+            const Id ptr = ctx.OpAccessChain(pointer_type, id, ctx.u32_zero_value, safe_index);
+            return (ctx.*atomic_func)(ctx.U32[1], ptr, scope, semantics, semantics, value, cmp_value);
+        });
+    }
+    const Id ptr = ctx.OpAccessChain(pointer_type, id, ctx.u32_zero_value, address);
     return (ctx.*atomic_func)(ctx.U32[1], ptr, scope, semantics, semantics, value, cmp_value);
 }
 
@@ -116,8 +137,15 @@ Id BufferAtomicU64(EmitContext& ctx, IR::Inst* inst, u32 handle, Id address, Id 
         address = ctx.OpIAdd(ctx.U32[1], address, offset);
     }
     const auto [id, pointer_type] = buffer.Alias(PointerType::U64);
-    const Id ptr = ctx.OpAccessChain(pointer_type, id, ctx.u32_zero_value, address);
     const auto [scope, semantics]{AtomicArgs(ctx)};
+    if (EmitContext::ShaderBounds() && buffer.buffer_type == BufferType::Guest) {
+        const auto [in_bounds, safe_index] = ctx.BoundIndex(id, address);
+        return ctx.GuardedValue(in_bounds, ctx.U64, ctx.u64_zero_value, [&] {
+            const Id ptr = ctx.OpAccessChain(pointer_type, id, ctx.u32_zero_value, safe_index);
+            return (ctx.*atomic_func)(ctx.U64, ptr, scope, semantics, value);
+        });
+    }
+    const Id ptr = ctx.OpAccessChain(pointer_type, id, ctx.u32_zero_value, address);
     return (ctx.*atomic_func)(ctx.U64, ptr, scope, semantics, value);
 }
 
