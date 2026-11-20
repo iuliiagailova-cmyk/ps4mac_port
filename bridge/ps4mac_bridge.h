@@ -60,6 +60,17 @@ typedef struct Ps4macRing {
     /* Ps4macMessage slots[capacity] follow */
 } Ps4macRing;
 
+/* Channels that already are narrow C seams in one process; the two-process build implements
+ * each with the messages above (src/runtime.h, gpu/shim/spartanportgpu.cpp):
+ *   guest -> graphics  PS4MAC_MEMORY_MAP/UNMAP/INVALIDATE  hooks the graphics side registers with
+ *                      runtime_memory_set_gpu_hooks(map, unmap, invalidate)
+ *   guest -> graphics  PS4MAC_WRITE_FAULT/READ_FAULT       spartanportgpu_handle_fault(context, addr)
+ *   graphics -> guest  PS4MAC_PROTECT                      runtime_memory_gpu_protect(addr, size, r, w)
+ *   graphics -> guest  (reads)                             runtime_memory_region/clamp/is_mapped,
+ *                      runtime_memory_write_backing: with guest memory shared, the graphics side
+ *                      keeps a read-only copy of the mapping table instead of calling across.
+ * GnmDriver and VideoOut reach the video core through Ps4mac::Gfx (gpu/shim/ps4mac_graphics.h). */
+
 #ifdef __cplusplus
 }
 #endif

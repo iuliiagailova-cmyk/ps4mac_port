@@ -5,11 +5,16 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <span>
 
 namespace AmdGpu {
 class Liverpool;
 }
+namespace Libraries::VideoOut {
+struct BufferAttributeGroup;
+struct VideoOutPort;
+} // namespace Libraries::VideoOut
 
 namespace Ps4mac::Gfx {
 
@@ -34,5 +39,24 @@ std::uint32_t MapComputeQueue(std::uintptr_t ring_base, std::uint32_t* read_poin
                               std::uint32_t ring_size_dw, std::uint32_t pipe_id);
 void UnmapComputeQueue(std::uint32_t vqid);
 ComputeQueue GetComputeQueue(std::uint32_t vqid);
+
+// --- Presentation (VideoOut). A prepared frame stays on the graphics side: the guest side only
+// holds its handle until it is presented.
+using FrameHandle = void*;
+/// The GPU end-of-pipe flips (EventWriteEop with a flip) report to this port.
+void SetVideoOutPort(Libraries::VideoOut::VideoOutPort* port);
+void RegisterDisplayBuffer(const Libraries::VideoOut::BufferAttributeGroup& group,
+                           std::uintptr_t address);
+FrameHandle PrepareFlip(const Libraries::VideoOut::BufferAttributeGroup& group,
+                        std::uintptr_t address);
+FrameHandle PrepareBlankFrame(bool present_thread);
+FrameHandle PrepareLastFrame();
+void SetHdr(bool enable);
+void Present(FrameHandle frame, bool is_reusing_frame = false, bool is_game_frame = true);
+bool IsHdrSupported();
+void SetGamma(float gamma);
+/// Runs `task` on the graphics command thread, in order with submissions.
+void RunOnGraphicsThread(std::function<void()> task);
+void ReportCompilerStats();
 
 } // namespace Ps4mac::Gfx

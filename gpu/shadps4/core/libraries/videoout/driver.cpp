@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "spartanport_trace.h"
+#include "ps4mac_graphics.h"
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -122,7 +123,7 @@ int VideoOutDriver::Open(const ServiceThreadParams* params) {
         return ORBIS_VIDEO_OUT_ERROR_RESOURCE_BUSY;
     }
     main_port.is_open = true;
-    liverpool->SetVoPort(&main_port);
+    Ps4mac::Gfx::SetVideoOutPort(&main_port);
     return 1;
 }
 
@@ -237,7 +238,7 @@ int VideoOutDriver::RegisterBuffers(VideoOutPort* port, s32 startIndex, void* co
         port->buffer_labels[startIndex + i] = 0;
         port->SignalVoLabel();
 
-        presenter->RegisterVideoOutSurface(group, address);
+        Ps4mac::Gfx::RegisterDisplayBuffer(group, address);
         LOG_INFO(Lib_VideoOut, "buffers[{}] = {:#x}", i + startIndex, address);
     }
 
@@ -304,8 +305,8 @@ int VideoOutDriver::ChangeBufferAttribute(VideoOutPort* port, s32 attributeIndex
 void VideoOutDriver::Flip(const Request& req) {
     // Update HDR status before presenting, then present the frame (spartanport: on the swap thread).
     RunPresenter([this, frame = req.frame, hdr = req.port->is_hdr] {
-        presenter->SetHDR(hdr);
-        presenter->Present(frame);
+        Ps4mac::Gfx::SetHdr(hdr);
+        Ps4mac::Gfx::Present(frame);
     });
     Vulkan::FrameCapture::OnFlip(req.index >= 0 ? req.port->buffer_slots[req.index].address_left
                                                 : 0);
@@ -519,7 +520,7 @@ void VideoOutDriver::Flip(const Request& req) {
                         SpartanStats::tick_wait_ns.exchange(0) / (window * 1e7),
                         frames ? double(SpartanStats::reduced_draws.exchange(0)) / frames : 0.0,
                         frames ? double(SpartanStats::scene_draws.exchange(0)) / frames : 0.0);
-            presenter->GetRasterizer().GetPipelineCache().ReportCompilerStats();
+            Ps4mac::Gfx::ReportCompilerStats();
             Vulkan::WaitDiagnostics::Report();
             // Frame pacing: spread of the guest flip intervals (judder that the mean hides).
             if (intervals.size() > 2) {
@@ -587,16 +588,16 @@ void VideoOutDriver::Flip(const Request& req) {
 
 void VideoOutDriver::DrawBlankFrame() {
     RunPresenter([this] {
-        const auto empty_frame = presenter->PrepareBlankFrame(true);
-        presenter->Present(empty_frame, false, false);
+        const auto empty_frame = Ps4mac::Gfx::PrepareBlankFrame(true);
+        Ps4mac::Gfx::Present(empty_frame, false, false);
     }, true);
 }
 
 void VideoOutDriver::DrawLastFrame() {
     RunPresenter([this] {
-        const auto frame = presenter->PrepareLastFrame();
+        const auto frame = Ps4mac::Gfx::PrepareLastFrame();
         if (frame != nullptr) {
-            presenter->Present(frame, true);
+            Ps4mac::Gfx::Present(frame, true);
         }
     }, true);
 }
@@ -620,7 +621,7 @@ bool VideoOutDriver::SubmitFlip(VideoOutPort* port, s32 index, s64 flip_arg,
 
     if (!is_eop) {
         // Non EOP flips can arrive from any thread so ask GPU thread to perform them
-        liverpool->SendCommand([=, this]() { SubmitFlipInternal(port, index, flip_arg, is_eop); });
+        Ps4mac::Gfx::RunOnGraphicsThread([=, this]() { SubmitFlipInternal(port, index, flip_arg, is_eop); });
     } else {
         SubmitFlipInternal(port, index, flip_arg, is_eop);
     }
@@ -631,12 +632,12 @@ bool VideoOutDriver::SubmitFlip(VideoOutPort* port, s32 index, s64 flip_arg,
 void VideoOutDriver::SubmitFlipInternal(VideoOutPort* port, s32 index, s64 flip_arg, bool is_eop) {
     Vulkan::Frame* frame;
     if (index == -1) {
-        frame = presenter->PrepareBlankFrame(false);
+        frame = static_cast<Vulkan::Frame*>(Ps4mac::Gfx::PrepareBlankFrame(false));
     } else {
         const auto& buffer = port->buffer_slots[index];
         ASSERT_MSG(buffer.group_index >= 0, "Trying to flip an unregistered buffer!");
         const auto& group = port->groups[buffer.group_index];
-        frame = presenter->PrepareFrame(group, buffer.address_left);
+        frame = static_cast<Vulkan::Frame*>(Ps4mac::Gfx::PrepareFlip(group, buffer.address_left));
     }
 
     {
