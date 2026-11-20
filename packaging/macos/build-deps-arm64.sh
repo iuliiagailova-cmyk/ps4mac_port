@@ -72,7 +72,7 @@ if ! step kosmickrisp; then
         fi
     fi
     mesa=$src/mesa-kosmickrisp/externals/mesa
-    for patch in kosmickrisp-spartanport.patch kosmickrisp-msl-packed.patch kosmickrisp-encoder-labels.patch; do
+    for patch in kosmickrisp-spartanport.patch kosmickrisp-msl-packed.patch kosmickrisp-ps4mac-diagnostics.patch; do
         if ! git -C "$mesa" apply --reverse --check "$PWD/packaging/macos/$patch" 2>/dev/null; then
             git -C "$mesa" apply "$PWD/packaging/macos/$patch"
         fi

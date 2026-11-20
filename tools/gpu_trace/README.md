@@ -7,7 +7,7 @@ render stage), so `SPARTAN_GPU_PROFILE=1` gives no usable numbers there. Instead
    `KK_LABEL_ENCODERS=1 SPARTAN_GPU_PROFILE=labels`: the video core inserts a debug label at
    every render pass (`pass WxH [targets] ... vs ps`) and dispatch (`dispatch cs <hash>`, and
    `internal: ...` for its own compute: tile manager, FSR, HLE copies); KosmicKrisp with
-   `packaging/macos/kosmickrisp-encoder-labels.patch` names the Metal encoder after it, or after
+   `packaging/macos/kosmickrisp-ps4mac-diagnostics.patch` names the Metal encoder after it, or after
    the function that opened a compute encoder (`kk: ...`).
 2. Record the service:
    `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun xctrace record --template 'Metal System Trace' --attach <pid> --time-limit 4s --output run.trace`

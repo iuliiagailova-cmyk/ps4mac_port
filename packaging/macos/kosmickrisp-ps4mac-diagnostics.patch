@@ -1,0 +1,351 @@
+diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
+index 22f4bf7f..ab6900ed 100644
+--- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
++++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
+@@ -1,3 +1,7 @@
++#include <dlfcn.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
+ /*
+  * Copyright © 2022 Collabora Ltd. and Red Hat Inc.
+  * Copyright 2025 LunarG, Inc.
+@@ -198,6 +202,8 @@ kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
+    VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
+    struct kk_cmd_pool *pool = kk_cmd_buffer_pool(cmd);
+ 
++   cmd->queue_sync_pending = kk_precise_barriers(); /* after earlier submissions */
++
+    /* If this is the first time starting the command buffer allocate Metal
+     * resources */
+    if (cmd->metal.cmd_buf == NULL) {
+@@ -244,9 +250,36 @@ kk_EndCommandBuffer(VkCommandBuffer commandBuffer)
+    return vk_command_buffer_end(&cmd->vk);
+ }
+ 
++/* ps4mac_port: KK_LABEL_ENCODERS=1 names Metal encoders after vkCmdInsertDebugUtilsLabelEXT, so
++ * Metal System Trace shows GPU time per Vulkan render pass or dispatch. A label inserted while no
++ * encoder is open (render encoders start at the first draw) names the next one. */
++static int
++kk_label_encoders(void)
++{
++   static int enabled = -1;
++   if (enabled < 0) {
++      const char *env = getenv("KK_LABEL_ENCODERS");
++      enabled = env && env[0] == '1';
++   }
++   return enabled;
++}
++
++static __thread struct {
++   const void *cmd;
++   char label[256];
++} kk_next_encoder_label;
++
+ static void
+ kk_encoder_update_debug(struct kk_cmd_buffer *cmd, mtl_command_encoder *encoder)
+ {
++   if (kk_label_encoders() && kk_next_encoder_label.cmd == cmd &&
++       kk_next_encoder_label.label[0]) {
++      mtl_encoder_set_label(encoder, kk_next_encoder_label.label);
++      kk_next_encoder_label.label[0] = 0;
++      util_dynarray_foreach(&cmd->vk.labels, VkDebugUtilsLabelEXT, label)
++         mtl_encoder_push_debug_group(encoder, label->pLabelName);
++      return;
++   }
+    /* Since there are many Metal command buffers and encoders for each Vulkan
+     * command buffer, we need to copy debug state from Vulkan to Metal when
+     * new Metal objects are created. */
+@@ -257,6 +290,65 @@ kk_encoder_update_debug(struct kk_cmd_buffer *cmd, mtl_command_encoder *encoder)
+       mtl_encoder_push_debug_group(encoder, label->pLabelName);
+ }
+ 
++/* ps4mac_port: precise barriers between Metal encoders (KK_PRECISE_BARRIERS=1). Upstream ends
++ * every encoder with a barrier after all its stages before all later queue stages, which keeps
++ * each encoder from overlapping anything after it. Here an encoder waits for earlier queue work
++ * only when Vulkan asked for it: a pipeline barrier, event, query or transfer (these mean "after
++ * everything before"), or a new command buffer (ordering across submissions); a render encoder
++ * always waits for the fragment work before it (attachments shared by consecutive passes). */
++bool
++kk_precise_barriers(void)
++{
++   static int enabled = -1;
++   if (enabled < 0) {
++      const char *env = getenv("KK_PRECISE_BARRIERS");
++      enabled = env && env[0] == '1';
++   }
++   return enabled;
++}
++
++void
++kk_queue_sync(struct kk_cmd_buffer *cmd)
++{
++   if (!kk_precise_barriers())
++      return;
++   cmd->queue_sync_pending = true;
++   if (cmd->metal.compute)
++      mtl_barrier_after_queue_stages(cmd->metal.compute, MTL_STAGE_ALL,
++                                     MTL_STAGE_DISPATCH | MTL_STAGE_BLIT);
++   if (cmd->metal.render)
++      mtl_barrier_after_queue_stages(cmd->metal.render, MTL_STAGE_ALL,
++                                     MTL_STAGE_VERTEX | MTL_STAGE_FRAGMENT);
++}
++
++static void
++kk_encoder_started(struct kk_cmd_buffer *cmd, void *encoder, bool render)
++{
++   if (!kk_precise_barriers())
++      return;
++   /* KK_BARRIER_STATS=1: encoders started with a full wait or a light one, every 20000. */
++   static int stats = -1;
++   static unsigned long counts[4];
++   if (stats < 0) {
++      const char *env = getenv("KK_BARRIER_STATS");
++      stats = env && env[0] == '1';
++   }
++   if (stats) {
++      counts[(render ? 2 : 0) + (cmd->queue_sync_pending ? 1 : 0)]++;
++      if ((counts[0] + counts[1] + counts[2] + counts[3]) % 20000 == 0)
++         fprintf(stderr, "KK barriers: render %lu full %lu light, compute %lu full %lu none\n",
++                 counts[3], counts[2], counts[1], counts[0]);
++   }
++   if (cmd->queue_sync_pending) {
++      mtl_barrier_after_queue_stages(encoder, MTL_STAGE_ALL,
++                                     render ? MTL_STAGE_VERTEX | MTL_STAGE_FRAGMENT
++                                            : MTL_STAGE_DISPATCH | MTL_STAGE_BLIT);
++      cmd->queue_sync_pending = false;
++   } else if (render) {
++      mtl_barrier_after_queue_stages(encoder, MTL_STAGE_FRAGMENT, MTL_STAGE_FRAGMENT);
++   }
++}
++
+ void
+ cs_start_render(struct kk_cmd_buffer *cmd)
+ {
+@@ -271,6 +363,7 @@ cs_start_render(struct kk_cmd_buffer *cmd)
+       cmd->metal.cmd_buf, state->render_pass_descriptor);
+ 
+    kk_encoder_update_debug(cmd, cmd->metal.render);
++   kk_encoder_started(cmd, cmd->metal.render, true);
+    /* Starting a new render pass means we already flushed and no barrier is
+     * needed. */
+    state->render.write_available = false;
+@@ -325,6 +418,18 @@ cs_get_compute(struct kk_cmd_buffer *cmd)
+       cmd->metal.compute = mtl_new_compute_command_encoder(cmd->metal.cmd_buf);
+       mtl_compute_set_argument_table(cmd->metal.compute, cmd->argument_table);
+       kk_encoder_update_debug(cmd, cmd->metal.compute);
++      kk_encoder_started(cmd, cmd->metal.compute, false);
++      /* ps4mac_port: with KK_LABEL_ENCODERS=1 a compute encoder is first named after the code
++       * that opened it (a later label from the application replaces the name). */
++      if (kk_label_encoders()) {
++         Dl_info info0 = {0}, info1 = {0};
++         dladdr(__builtin_return_address(0), &info0);
++         dladdr(__builtin_return_address(1), &info1);
++         char name[200];
++         snprintf(name, sizeof(name), "kk: %s <- %s", info0.dli_sname ? info0.dli_sname : "?",
++                  info1.dli_sname ? info1.dli_sname : "?");
++         mtl_encoder_set_label(cmd->metal.compute, name);
++      }
+    }
+ 
+    return cmd->metal.compute;
+@@ -334,7 +439,14 @@ static void
+ end_encoder(struct kk_cmd_buffer *cmd, mtl_command_encoder *encoder)
+ {
+    /* TODO_KOSMICKRISP This is probably overkill */
+-   mtl_barrier_after_stages(encoder, MTL_STAGE_ALL, MTL_STAGE_ALL);
++   /* ps4mac_port measurement: KK_END_BARRIER=0 skips it (not correct in general). */
++   static int end_barrier = -1;
++   if (end_barrier < 0) {
++      const char *env = getenv("KK_END_BARRIER");
++      end_barrier = !(env && env[0] == '0');
++   }
++   if (end_barrier && !kk_precise_barriers())
++      mtl_barrier_after_stages(encoder, MTL_STAGE_ALL, MTL_STAGE_ALL);
+    mtl_end_encoding(encoder);
+    mtl_release(encoder);
+ 
+@@ -356,6 +468,7 @@ flush_post_render_writes(struct kk_cmd_buffer *cmd)
+                                    struct libkk_imm_write))
+       return;
+ 
++   kk_queue_sync(cmd); /* the writes follow the render pass's work */
+    util_dynarray_foreach(&cmd->post_render_writes, struct libkk_imm_write, w) {
+       libkk_write_u32(cmd, kk_grid_1d(1), true, (uint64_t)w->address, w->value);
+    }
+@@ -461,6 +574,8 @@ kk_CmdPipelineBarrier2(VkCommandBuffer commandBuffer,
+ {
+    VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
+ 
++   kk_queue_sync(cmd);
++
+    /* TODO_KOSMICKRISP Lighten barriers according to the actual requested
+     * barrier. To take advantage of this we need to remove the chaining of
+     * encoders. */
+@@ -838,6 +953,8 @@ kk_dispatch_precomp(struct kk_cmd_buffer *cmd, struct kk_grid grid,
+ void
+ kk_cmd_write(struct kk_cmd_buffer *cmd, struct libkk_imm_write write)
+ {
++   if (!cmd->metal.render)
++      kk_queue_sync(cmd);
+    /* If we are mid render, queue the write for when we are done */
+    if (cmd->metal.render)
+       util_dynarray_append(&cmd->post_render_writes, write);
+@@ -1126,4 +1243,19 @@ kk_CmdInsertDebugUtilsLabelEXT(VkCommandBuffer _commandBuffer,
+    if (cmd->metal.compute)
+       mtl_encoder_insert_debug_signpost(cmd->metal.compute,
+                                         pLabelInfo->pLabelName);
++
++   /* Labels of render passes ("pass ...") name the render encoder, which starts at the pass's
++    * first draw; others name the compute encoder that holds the work just recorded. */
++   if (kk_label_encoders()) {
++      const bool pass = !strncmp(pLabelInfo->pLabelName, "pass ", 5);
++      if (pass && cmd->metal.render) {
++         mtl_encoder_set_label(cmd->metal.render, pLabelInfo->pLabelName);
++      } else if (pass) {
++         kk_next_encoder_label.cmd = cmd;
++         snprintf(kk_next_encoder_label.label, sizeof(kk_next_encoder_label.label), "%s",
++                  pLabelInfo->pLabelName);
++      } else if (cmd->metal.compute) {
++         mtl_encoder_set_label(cmd->metal.compute, pLabelInfo->pLabelName);
++      }
++   }
+ }
+diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
+index dcd0983c..c832d37d 100644
+--- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
++++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
+@@ -237,6 +237,10 @@ struct kk_ts_stage_entry {
+ struct kk_cmd_buffer {
+    struct vk_command_buffer vk;
+ 
++   /* ps4mac_port: KK_PRECISE_BARRIERS=1: the next encoder waits for earlier queue work (a Vulkan
++    * barrier, event, transfer or command buffer start came since). */
++   bool queue_sync_pending;
++
+    struct {
+       mtl_command_allocator *allocator;
+       mtl_command_buffer *cmd_buf;
+@@ -316,6 +320,10 @@ void cs_start_render(struct kk_cmd_buffer *cmd);
+ mtl_render_encoder *cs_get_render(struct kk_cmd_buffer *cmd);
+ mtl_compute_encoder *cs_get_compute(struct kk_cmd_buffer *cmd);
+ void cs_end(struct kk_cmd_buffer *cmd);
++
++/* ps4mac_port: see queue_sync_pending. */
++bool kk_precise_barriers(void);
++void kk_queue_sync(struct kk_cmd_buffer *cmd);
+ void kk_cmd_bind_root_to_argument_table(struct kk_cmd_buffer *cmd,
+                                         uint64_t addr);
+ 
+diff --git a/src/kosmickrisp/vulkan/kk_cmd_copy.c b/src/kosmickrisp/vulkan/kk_cmd_copy.c
+index 67bb33ff..88483d59 100644
+--- a/src/kosmickrisp/vulkan/kk_cmd_copy.c
++++ b/src/kosmickrisp/vulkan/kk_cmd_copy.c
+@@ -23,6 +23,7 @@ kk_CmdCopyBuffer2(VkCommandBuffer commandBuffer,
+                   const VkCopyBufferInfo2 *pCopyBufferInfo)
+ {
+    VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
++   kk_queue_sync(cmd);
+    VK_FROM_HANDLE(kk_buffer, src, pCopyBufferInfo->srcBuffer);
+    VK_FROM_HANDLE(kk_buffer, dst, pCopyBufferInfo->dstBuffer);
+ 
+@@ -88,6 +89,7 @@ kk_CmdCopyBufferToImage2(VkCommandBuffer commandBuffer,
+                          const VkCopyBufferToImageInfo2 *pCopyBufferToImageInfo)
+ {
+    VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
++   kk_queue_sync(cmd);
+    VK_FROM_HANDLE(kk_buffer, buffer, pCopyBufferToImageInfo->srcBuffer);
+    VK_FROM_HANDLE(kk_image, image, pCopyBufferToImageInfo->dstImage);
+ 
+@@ -118,6 +120,7 @@ kk_CmdCopyImageToBuffer2(VkCommandBuffer commandBuffer,
+                          const VkCopyImageToBufferInfo2 *pCopyImageToBufferInfo)
+ {
+    VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
++   kk_queue_sync(cmd);
+    VK_FROM_HANDLE(kk_image, image, pCopyImageToBufferInfo->srcImage);
+    VK_FROM_HANDLE(kk_buffer, buffer, pCopyImageToBufferInfo->dstBuffer);
+ 
+@@ -353,6 +356,7 @@ kk_CmdCopyImage2(VkCommandBuffer commandBuffer,
+                  const VkCopyImageInfo2 *pCopyImageInfo)
+ {
+    VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
++   kk_queue_sync(cmd);
+    VK_FROM_HANDLE(kk_image, src, pCopyImageInfo->srcImage);
+    VK_FROM_HANDLE(kk_image, dst, pCopyImageInfo->dstImage);
+ 
+diff --git a/src/kosmickrisp/vulkan/kk_cmd_meta.c b/src/kosmickrisp/vulkan/kk_cmd_meta.c
+index 9163df56..380bb41e 100644
+--- a/src/kosmickrisp/vulkan/kk_cmd_meta.c
++++ b/src/kosmickrisp/vulkan/kk_cmd_meta.c
+@@ -206,6 +206,7 @@ kk_CmdFillMemoryKHR(VkCommandBuffer commandBuffer,
+                     VkAddressCommandFlagsKHR dstFlags, uint32_t data)
+ {
+    VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
++   kk_queue_sync(cmd);
+    struct kk_device *dev = kk_cmd_buffer_device(cmd);
+ 
+    struct kk_meta_save save;
+@@ -222,6 +223,7 @@ kk_CmdUpdateMemoryKHR(VkCommandBuffer commandBuffer,
+                       const void *pData)
+ {
+    VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
++   kk_queue_sync(cmd);
+    struct kk_device *dev = kk_cmd_buffer_device(cmd);
+ 
+    struct kk_meta_save save;
+@@ -237,6 +239,7 @@ kk_CmdBlitImage2(VkCommandBuffer commandBuffer,
+                  const VkBlitImageInfo2 *pBlitImageInfo)
+ {
+    VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
++   kk_queue_sync(cmd);
+    struct kk_device *dev = kk_cmd_buffer_device(cmd);
+ 
+    struct kk_meta_save save;
+@@ -251,6 +254,7 @@ kk_CmdResolveImage2(VkCommandBuffer commandBuffer,
+                     const VkResolveImageInfo2 *pResolveImageInfo)
+ {
+    VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
++   kk_queue_sync(cmd);
+    struct kk_device *dev = kk_cmd_buffer_device(cmd);
+ 
+    struct kk_meta_save save;
+diff --git a/src/kosmickrisp/vulkan/kk_event.c b/src/kosmickrisp/vulkan/kk_event.c
+index 3e6db313..c52ceac7 100644
+--- a/src/kosmickrisp/vulkan/kk_event.c
++++ b/src/kosmickrisp/vulkan/kk_event.c
+@@ -113,4 +113,7 @@ kk_CmdWaitEvents2(VkCommandBuffer commandBuffer, uint32_t eventCount,
+                   const VkDependencyInfo *pDependencyInfos)
+ {
+    /* We do nothing, event should already be set by the time we are here. */
++   /* ps4mac_port: with precise barriers the wait is a dependency like a pipeline barrier. */
++   VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
++   kk_queue_sync(cmd);
+ }
+diff --git a/src/kosmickrisp/vulkan/kk_query_pool.c b/src/kosmickrisp/vulkan/kk_query_pool.c
+index 8c78cf5e..ad079eba 100644
+--- a/src/kosmickrisp/vulkan/kk_query_pool.c
++++ b/src/kosmickrisp/vulkan/kk_query_pool.c
+@@ -282,6 +282,7 @@ kk_CmdResetQueryPool(VkCommandBuffer commandBuffer, VkQueryPool queryPool,
+                      uint32_t firstQuery, uint32_t queryCount)
+ {
+    VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
++   kk_queue_sync(cmd);
+    VK_FROM_HANDLE(kk_query_pool, pool, queryPool);
+ 
+    assert(cmd->metal.render == NULL);
+@@ -356,6 +357,7 @@ kk_CmdWriteTimestamp2(VkCommandBuffer commandBuffer,
+                       uint32_t query)
+ {
+    VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
++   kk_queue_sync(cmd);
+    VK_FROM_HANDLE(kk_query_pool, pool, queryPool);
+    struct kk_device *dev = kk_cmd_buffer_device(cmd);
+    assert(kk_pool_is_ts(pool) && pool->ts.heap);
+@@ -561,6 +563,7 @@ kk_CmdCopyQueryPoolResultsToMemoryKHR(
+    VkAddressCommandFlagsKHR dstFlags, VkQueryResultFlags flags)
+ {
+    VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
++   kk_queue_sync(cmd);
+    VK_FROM_HANDLE(kk_query_pool, pool, queryPool);
+    struct kk_device *dev = kk_cmd_buffer_device(cmd);
+ 
