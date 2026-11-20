@@ -3,6 +3,8 @@
 
 #include <boost/container/small_vector.hpp>
 
+#include <cstdio>
+#include "core/emulator_settings.h"
 #include "shader_recompiler/info.h"
 #include "video_core/renderer_vulkan/vk_compute_pipeline.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
@@ -106,6 +108,10 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
         .stage = shader_ci,
         .layout = *pipeline_layout,
     };
+    if (EmulatorSettings.IsDumpShaders()) {
+        // ps4mac_port: marks the driver's shader log (MESA_KK_DEBUG=msl) with the shader it compiles.
+        std::fprintf(stderr, "Pipeline compile mark: %s\n", debug_str.c_str());
+    }
     auto [pipeline_result, pipe] =
         instance.GetDevice().createComputePipelineUnique(pipeline_cache, compute_pipeline_ci);
     ASSERT_MSG(pipeline_result == vk::Result::eSuccess, "Failed to create compute pipeline: {}",
