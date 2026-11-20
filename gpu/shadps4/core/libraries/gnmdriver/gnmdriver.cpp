@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "spartanport_trace.h"
+#include "ps4mac_graphics.h"
 #include "gnm_error.h"
 #include "gnmdriver.h"
 
@@ -307,7 +308,7 @@ void PS4_SYSV_ABI sceGnmDingDong(u32 gnm_vqid, u32 next_offs_dw) {
     }
 
     auto vqid = gnm_vqid - 1;
-    auto& asc_queue = liverpool->asc_queues[{vqid}];
+    const auto asc_queue = Ps4mac::Gfx::GetComputeQueue(vqid);
 
     auto& offs_dw = asc_next_offs_dw[vqid];
 
@@ -318,12 +319,12 @@ void PS4_SYSV_ABI sceGnmDingDong(u32 gnm_vqid, u32 next_offs_dw) {
     if (next_offs_dw < offs_dw && next_offs_dw != 0) {
         // For cases if a submission is split at the end of the ring buffer, we need to submit it in
         // two parts to handle the wrap
-        liverpool->SubmitAsc(gnm_vqid, {reinterpret_cast<const u32*>(asc_queue.map_addr) + offs_dw,
+        Ps4mac::Gfx::SubmitCompute(gnm_vqid, {reinterpret_cast<const u32*>(asc_queue.ring_base) + offs_dw,
                                         asc_queue.ring_size_dw - offs_dw});
         offs_dw = 0;
     }
 
-    const auto* acb_ptr = reinterpret_cast<const u32*>(asc_queue.map_addr) + offs_dw;
+    const auto* acb_ptr = reinterpret_cast<const u32*>(asc_queue.ring_base) + offs_dw;
     const auto acb_size_dw = (next_offs_dw ? next_offs_dw : asc_queue.ring_size_dw) - offs_dw;
     const std::span acb_span{acb_ptr, acb_size_dw};
 
@@ -361,7 +362,7 @@ void PS4_SYSV_ABI sceGnmDingDong(u32 gnm_vqid, u32 next_offs_dw) {
             .base_addr = base_addr,
         });
     }
-    liverpool->SubmitAsc(gnm_vqid, acb_span);
+    Ps4mac::Gfx::SubmitCompute(gnm_vqid, acb_span);
 }
 
 void PS4_SYSV_ABI sceGnmDingDongForWorkload(u32 gnm_vqid, u32 next_offs_dw, u64 workload_id) {
@@ -1223,15 +1224,14 @@ int PS4_SYSV_ABI sceGnmMapComputeQueue(u32 pipe_id, u32 queue_id, VAddr ring_bas
         return ORBIS_GNM_ERROR_COMPUTEQUEUE_INVALID_READ_PTR_ADDR;
     }
 
-    const auto vqid =
-        liverpool->asc_queues.insert(VAddr(ring_base_addr), read_ptr_addr, ring_size_dw, pipe_id);
+    const auto vqid_index =
+        Ps4mac::Gfx::MapComputeQueue(VAddr(ring_base_addr), read_ptr_addr, ring_size_dw, pipe_id);
     // We need to offset index as `dingDong` assumes it to be from the range [1..64]
-    const auto gnm_vqid = vqid.index + 1;
+    const auto gnm_vqid = vqid_index + 1;
     LOG_INFO(Lib_GnmDriver, "ASC pipe {} queue {} mapped to vqueue {}", pipe_id, queue_id,
              gnm_vqid);
 
-    const auto& queue = liverpool->asc_queues[vqid];
-    *queue.read_addr = 0u;
+    *Ps4mac::Gfx::GetComputeQueue(vqid_index).read_pointer = 0u;
 
     return gnm_vqid;
 }
@@ -2181,26 +2181,26 @@ static inline s32 PerformSubmit(u32 count, const u32* dcb_gpu_addrs[], u32* dcb_
 
     if (send_init_packet) {
         if (sdk_version < Common::ElfInfo::FW_200) {
-            liverpool->SubmitGfx(InitSequence, {});
+            Ps4mac::Gfx::SubmitGfx(InitSequence, {});
         } else if (sdk_version < Common::ElfInfo::FW_400) {
             if (sceKernelIsNeoMode()) {
                 if (!UseNeoCompatSequences) {
-                    liverpool->SubmitGfx(InitSequence200Neo, {});
+                    Ps4mac::Gfx::SubmitGfx(InitSequence200Neo, {});
                 } else {
-                    liverpool->SubmitGfx(InitSequence200NeoCompat, {});
+                    Ps4mac::Gfx::SubmitGfx(InitSequence200NeoCompat, {});
                 }
             } else {
-                liverpool->SubmitGfx(InitSequence200, {});
+                Ps4mac::Gfx::SubmitGfx(InitSequence200, {});
             }
         } else {
             if (sceKernelIsNeoMode()) {
                 if (!UseNeoCompatSequences) {
-                    liverpool->SubmitGfx(InitSequence350Neo, {});
+                    Ps4mac::Gfx::SubmitGfx(InitSequence350Neo, {});
                 } else {
-                    liverpool->SubmitGfx(InitSequence350NeoCompat, {});
+                    Ps4mac::Gfx::SubmitGfx(InitSequence350NeoCompat, {});
                 }
             } else {
-                liverpool->SubmitGfx(InitSequence350, {});
+                Ps4mac::Gfx::SubmitGfx(InitSequence350, {});
             }
         }
         send_init_packet = false;
@@ -2243,7 +2243,7 @@ static inline s32 PerformSubmit(u32 count, const u32* dcb_gpu_addrs[], u32* dcb_
                 .base_addr = reinterpret_cast<uintptr_t>(ccb),
             });
         }
-        liverpool->SubmitGfx(dcb_span, ccb_span);
+        Ps4mac::Gfx::SubmitGfx(dcb_span, ccb_span);
     }
     return ORBIS_OK;
 }
@@ -2360,10 +2360,10 @@ s32 PS4_SYSV_ABI sceGnmSubmitDone() {
     LOG_DEBUG(Lib_GnmDriver, "called");
     std::scoped_lock lk{m_submit_lock};
     WaitGpuIdle();
-    if (!liverpool->IsGpuIdle()) {
+    if (!Ps4mac::Gfx::IsIdle()) {
         submission_lock = true;
     }
-    liverpool->SubmitDone();
+    Ps4mac::Gfx::SubmitDone();
     send_init_packet = true;
     ++frames_submitted;
     DebugState.IncGnmFrameNum();
@@ -2371,7 +2371,7 @@ s32 PS4_SYSV_ABI sceGnmSubmitDone() {
 }
 
 int PS4_SYSV_ABI sceGnmUnmapComputeQueue(u32 vqid) {
-    liverpool->asc_queues.erase(Common::SlotId{vqid - 1});
+    Ps4mac::Gfx::UnmapComputeQueue(vqid - 1);
     return ORBIS_OK;
 }
 
@@ -2923,6 +2923,7 @@ int PS4_SYSV_ABI Func_F916890425496553() {
 void RegisterLib(Core::Loader::SymbolsResolver* sym) {
     LOG_INFO(Lib_GnmDriver, "Initializing presenter");
     liverpool = std::make_unique<AmdGpu::Liverpool>();
+    Ps4mac::Gfx::Attach(liverpool.get());
     presenter = std::make_unique<Vulkan::Presenter>(*g_window, liverpool.get());
 
     const s32 result = sceKernelGetCompiledSdkVersion(&sdk_version);
@@ -2931,7 +2932,7 @@ void RegisterLib(Core::Loader::SymbolsResolver* sym) {
     }
 
     if (EmulatorSettings.IsCopyGpuBuffers()) {
-        liverpool->ReserveCopyBufferSpace();
+        Ps4mac::Gfx::ReserveCopyBufferSpace();
     }
 
     Platform::IrqC::Instance()->Register(Platform::InterruptId::GpuIdle, ResetSubmissionLock,
