@@ -11,6 +11,7 @@
 #include <magic_enum/magic_enum.hpp>
 #include "spartanport_copy.h"
 #include "spartanport_toggles.h"
+#include "core/emulator_settings.h"
 #include "common/alignment.h"
 #include "core/memory.h"
 #include "video_core/amdgpu/liverpool.h"
@@ -93,8 +94,13 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
                        reqs.memoryTypeBits)
             .value();
 
+    // spartanport: shaders read the page table only with direct memory access
+    // (SPARTAN_DIRECT_MEMORY_ACCESS, off by default); without it a token table saves 512 MiB of
+    // GPU memory, which Apple GPUs commit at allocation.
+    dma_enabled = EmulatorSettings.IsDirectMemoryAccessEnabled();
     const u64 bda_pagetable_size =
-        (blocks_per_arena_page * num_arena_pages) * sizeof(vk::DeviceAddress);
+        dma_enabled ? (blocks_per_arena_page * num_arena_pages) * sizeof(vk::DeviceAddress)
+                    : u64{64_KB};
     fault_manager = std::make_unique<FaultManager>(instance, scheduler, *this, block_shift,
                                                    blocks_per_arena_page * num_arena_pages);
     bda_pagetable_buffer = std::make_unique<Buffer>(
@@ -569,7 +575,8 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
 
     boost::container::small_vector<vk::BufferCopy, 8> copies;
     const auto staging =
-        staging_pool.Request(resident_blocks * sizeof(vk::DeviceAddress), MemoryType::HostUncached);
+        staging_pool.Request((dma_enabled ? resident_blocks : 1) * sizeof(vk::DeviceAddress),
+                             MemoryType::HostUncached);
 
     u64 memory_offset{};
     ArenaBinds* binds = BindsForArena(arena);
@@ -593,6 +600,9 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
         });
         memory_offset += bind.size;
 
+        if (!dma_enabled) {
+            continue;
+        }
         for (u32 block = 0; block < bind.size; block += block_size) {
             *(bda_addrs++) = arena->BufferDeviceAddress() + bind.resourceOffset + block;
         }
@@ -601,8 +611,10 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
         offset += copy_size;
     }
 
-    staging.Flush();
-    runtime.CopyBuffer(staging.buffer, bda_pagetable_buffer.get(), copies);
+    if (!copies.empty()) {
+        staging.Flush();
+        runtime.CopyBuffer(staging.buffer, bda_pagetable_buffer.get(), copies);
+    }
 }
 
 bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 size,
