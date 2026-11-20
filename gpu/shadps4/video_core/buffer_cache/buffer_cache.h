@@ -6,6 +6,7 @@
 #include "spartanport_copy.h"
 
 #include <deque>
+#include <unordered_map>
 #include <boost/container/small_vector.hpp>
 
 #include "common/interval_set.h"
@@ -131,6 +132,15 @@ private:
     void EnsureResident(const Buffer* arena, u64 first_block, u64 last_block);
 
     void DownloadMemory(const Buffer* arena, VAddr device_addr, u64 size);
+
+    /// spartanport: GPU writes to arenas, by 64 KiB block: the tick that recorded the last one.
+    /// Downloads whose writers have all been submitted wait for those ticks only and copy from
+    /// the mapped arena memory (unified memory) instead of submitting a copy and waiting for the
+    /// whole GPU (Finish): ~115 ms per write fault in Ratchet & Clank's levels.
+    static constexpr u64 WRITE_TICK_SHIFT = 16;
+    std::unordered_map<u64, u64> write_ticks;
+    std::unordered_map<VkDeviceMemory, u8*> mapped_backing;
+    bool DownloadMapped(VAddr device_addr, u64 size);
 
     bool SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 size, bool is_written,
                            bool is_texel_buffer);

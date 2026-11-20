@@ -96,6 +96,8 @@ inline std::atomic<std::uint64_t> buffer_upload_bytes{0};
 /// Device memory backing the buffer arenas (guest memory copies), and registered image bytes.
 inline std::atomic<std::uint64_t> arena_resident_bytes{0};
 inline std::atomic<std::uint64_t> image_bytes{0};
+/// Buffer downloads from mapped arena memory, and those that submitted and waited (Finish).
+inline std::atomic<std::uint64_t> mapped_downloads{0}, finish_downloads{0};
 /// Write faults that took over 5 ms (signal-safe ring; printed with the texture cache report).
 inline constexpr unsigned SLOW_FAULTS = 64;
 inline std::atomic<std::uint64_t> slow_fault_addr[SLOW_FAULTS]{};

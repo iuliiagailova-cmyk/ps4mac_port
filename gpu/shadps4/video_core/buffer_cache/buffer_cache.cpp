@@ -172,7 +172,82 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
     }
 }
 
+bool BufferCache::DownloadMapped(VAddr device_addr, u64 size) {
+    static const bool enabled = [] {
+        const char* env = std::getenv("SPARTAN_MAPPED_DOWNLOAD");
+        return !(env && env[0] == '0');
+    }();
+    if (!enabled || mapped_backing.empty()) {
+        return false;
+    }
+    // The ranges to download, and the newest tick that wrote them.
+    boost::container::small_vector<std::pair<VAddr, VAddr>, 8> ranges;
+    u64 newest = 0;
+    bool unknown = false;
+    memory_tracker->ForEachDownloadRange<false>(device_addr, size, [&](u64 address, u64 length) {
+        gpu_modified_ranges.ForEachInRange(address, length, [&](VAddr start, VAddr end) {
+            ranges.emplace_back(start, end);
+            for (u64 block = start >> WRITE_TICK_SHIFT; block <= (end - 1) >> WRITE_TICK_SHIFT;
+                 ++block) {
+                const auto it = write_ticks.find(block);
+                if (it == write_ticks.end()) {
+                    unknown = true;
+                } else {
+                    newest = std::max(newest, it->second);
+                }
+            }
+        });
+    });
+    if (ranges.empty()) {
+        return true;
+    }
+    // A writer still being recorded needs the slow path (submit and wait for everything).
+    if (unknown || newest >= scheduler.CurrentTick()) {
+        return false;
+    }
+    // Every range must be backed by mapped memory.
+    const auto host_of = [&](VAddr address) -> u8* {
+        u8* host = nullptr;
+        const u64 block = address >> block_shift;
+        resident_ranges.ForEachInRange(block, block + 1, [&](const Backing& backing) {
+            const auto it = mapped_backing.find(static_cast<VkDeviceMemory>(backing.memory));
+            if (it != mapped_backing.end()) {
+                host = it->second + backing.offset + ((block - backing.start) << block_shift) +
+                       (address & ((u64{1} << block_shift) - 1));
+            }
+        });
+        return host;
+    };
+    for (const auto& [start, end] : ranges) {
+        for (VAddr a = start; a < end;) {
+            const VAddr block_end = std::min<VAddr>(end, ((a >> block_shift) + 1) << block_shift);
+            if (!host_of(a)) {
+                return false;
+            }
+            a = block_end;
+        }
+    }
+    if (!scheduler.IsFree(newest)) {
+        scheduler.Wait(newest);
+    }
+    SpartanStats::mapped_downloads.fetch_add(1, std::memory_order_relaxed);
+    for (const auto& [start, end] : ranges) {
+        for (VAddr a = start; a < end;) {
+            const VAddr block_end = std::min<VAddr>(end, ((a >> block_shift) + 1) << block_shift);
+            memory->TryWriteBacking(std::bit_cast<u8*>(a), host_of(a), block_end - a);
+            a = block_end;
+        }
+        gpu_modified_ranges.Subtract(start, end - start);
+    }
+    memory_tracker->UnmarkRegionAsGpuModified(device_addr, size);
+    return true;
+}
+
 void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 size) {
+    if (DownloadMapped(device_addr, size)) {
+        return;
+    }
+    SpartanStats::finish_downloads.fetch_add(1, std::memory_order_relaxed);
     boost::container::small_vector<vk::BufferCopy, 1> copies;
     u64 total_size_bytes = 0;
     const VAddr arena_base = arena->cpu_addr;
@@ -345,6 +420,12 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
     }
     if (is_written) {
         gpu_modified_ranges.Add(device_addr, size);
+        const u64 tick = scheduler.CurrentTick();
+        for (u64 block = device_addr >> WRITE_TICK_SHIFT;
+             block <= (device_addr + size - 1) >> WRITE_TICK_SHIFT; ++block) {
+            u64& t = write_ticks[block];
+            t = std::max(t, tick);
+        }
     }
     return {arena, arena->Offset(device_addr)};
 }
@@ -475,6 +556,15 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
         .memoryTypeIndex = arena_memory_type_index,
     };
     const auto device_memory = Vulkan::Check(instance.GetDevice().allocateMemory(alloc_info));
+    if (instance.GetMemoryProperties().memoryTypes[arena_memory_type_index].propertyFlags &
+        vk::MemoryPropertyFlagBits::eHostVisible) {
+        void* host = nullptr;
+        if (instance.GetDevice().mapMemory(device_memory, 0, alloc_info.allocationSize, {}, &host) ==
+                vk::Result::eSuccess &&
+            host) {
+            mapped_backing[static_cast<VkDeviceMemory>(device_memory)] = static_cast<u8*>(host);
+        }
+    }
     SpartanStats::arena_resident_bytes.fetch_add(alloc_info.allocationSize, std::memory_order_relaxed);
 
     boost::container::small_vector<vk::BufferCopy, 8> copies;

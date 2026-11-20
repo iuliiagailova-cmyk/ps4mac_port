@@ -1859,6 +1859,9 @@ void TextureCache::DeleteImage(ImageId image_id) {
 
 void TextureCache::PrintRefreshDiagnostics() {
     std::scoped_lock refresh_lock{large_refreshes_mutex};
+    std::printf("  buffer downloads: %llu from mapped memory, %llu with Finish\n",
+                (unsigned long long)SpartanStats::mapped_downloads.exchange(0),
+                (unsigned long long)SpartanStats::finish_downloads.exchange(0));
     for (const auto& [address, r] : large_refreshes) {
         std::printf("  image refresh %#llx: %llu MiB %ux%u format %u flags %#x, %llu times\n",
                     (unsigned long long)address, (unsigned long long)(r.size >> 20), r.width,
