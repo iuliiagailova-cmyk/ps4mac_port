@@ -398,11 +398,18 @@ extern "C" uintptr_t spartanportgpu_resolve(const char* scoped_nid) {
 }
 
 extern "C" int runtime_bridge_fault(uintptr_t address, int is_write);
+#if defined(__APPLE__) && defined(__x86_64__)
+#include <sys/ucontext.h>
+extern "C" void runtime_bridge_fault_pc(uint64_t rip);
+#endif
 
 extern "C" int spartanportgpu_handle_fault(void* ucontext, void* address) {
     if (Ps4mac::Gfx::Remote()) {
         // ps4mac_port step 3.4: the page tracking is the service's; it answers once it has
         // handled the access (and changed the protection).
+#if defined(__APPLE__) && defined(__x86_64__)
+        runtime_bridge_fault_pc(static_cast<ucontext_t*>(ucontext)->uc_mcontext->__ss.__rip);
+#endif
         return runtime_bridge_fault(reinterpret_cast<uintptr_t>(address),
                                     Common::IsWriteError(ucontext) ? 1 : 0);
     }

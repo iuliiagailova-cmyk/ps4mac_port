@@ -34,9 +34,35 @@ static Ps4macSharedBlock *block;
 static pid_t service_pid;
 static pthread_mutex_t push_lock = PTHREAD_MUTEX_INITIALIZER; /* the ring has one producer */
 
+/* Diagnostic (SPARTAN_LATENCY=<file.csv>): a timeline of the frame's critical path on the guest
+ * side, "ns,kind,value" lines on CLOCK_MONOTONIC_RAW (the service's SpartanTrace JSON gives its
+ * window start on the same clock). Kinds: S guest message sent (value: its kind),
+ * A the address the main thread waits on (when it changes), I interrupt received (value: its id), F a page fault answered (value: wait ns * 2 + write), M the game's main thread changed state (value: 0 other,
+ * 1 in the SPARTAN_LAT_WAIT rip range, 2 in SPARTAN_LAT_PAUSE; ranges "lo-hi", hex), R the render
+ * thread (the first to submit graphics work) entered (1) or left (0) SPARTAN_LAT_IMAGE. The main
+ * thread is sampled every SPARTAN_LAT_US microseconds (default 200) with thread_get_state; its
+ * memory is not read (a read of a GPU-protected page would fault and change the timing). */
+static FILE *lat_file;
+static mach_port_t game_thread_port; /* the game's main thread (runtime_bridge_note_game_thread) */
+static mach_port_t render_thread_port; /* the first thread to submit graphics work */
+static pthread_mutex_t lat_lock = PTHREAD_MUTEX_INITIALIZER;
+static void lat_event(char kind, uint64_t value) {
+    if (!lat_file) return;
+    /* The clock of the service's std::chrono::steady_clock (ps4mac_now_ns leaves out sleep). */
+    const uint64_t now = clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW);
+    pthread_mutex_lock(&lat_lock);
+    fprintf(lat_file, "%llu,%c,%llu\n", (unsigned long long)now, kind, (unsigned long long)value);
+    pthread_mutex_unlock(&lat_lock);
+}
+
 static _Atomic uint64_t messages_sent;
 static void send_message(const Ps4macMessage *m) {
     atomic_fetch_add_explicit(&messages_sent, 1, memory_order_relaxed);
+    if (lat_file && m->kind == PS4MAC_SUBMIT_GFX && !render_thread_port)
+        render_thread_port = mach_thread_self(); /* the thread that submits: the game's render thread */
+    if (lat_file && m->kind != PS4MAC_MEMORY_MAP && m->kind != PS4MAC_MEMORY_UNMAP &&
+        m->kind != PS4MAC_MEMORY_PROTECT)
+        lat_event('S', m->kind);
     pthread_mutex_lock(&push_lock);
     if (ps4mac_ring_push(&block->to_graphics, m, 2000000000ull))
         fputs("Bridge: the graphics service does not take messages\n", stderr);
@@ -132,6 +158,8 @@ int runtime_bridge_is_shared(uintptr_t address, uint64_t size) {
  * handler, gpu/shim/spartanportgpu.cpp). Returns whether it was a page the GPU protects; the
  * service has then changed the protection, and the access can be retried. */
 static uint32_t fault_sequence;
+static __thread uint64_t fault_pc; /* the faulting instruction (SPARTAN_LATENCY) */
+void runtime_bridge_fault_pc(uint64_t rip) { fault_pc = rip; }
 int runtime_bridge_fault(uintptr_t address, int is_write) {
     if (!block || !remote_graphics || !runtime_bridge_is_shared(address, 1)) return 0;
     pthread_mutex_lock(&push_lock); /* sequences in ring order: the service answers in order */
@@ -144,6 +172,15 @@ int runtime_bridge_fault(uintptr_t address, int is_write) {
     const uint64_t start = ps4mac_now_ns();
     ps4mac_counter_wait(&block->fault_done, sequence, 200000);
     atomic_fetch_add_explicit(&block->stat_fault_wait_ns, ps4mac_now_ns() - start, memory_order_relaxed);
+    if (lat_file) {
+        const uint64_t waited = ps4mac_now_ns() - start;
+        lat_event('F', waited * 2 + (uint64_t)(is_write != 0)); /* at its end */
+        if (waited > 2000000) { /* a slow one: where, from which instruction, on the main thread? */
+            lat_event('X', address);
+            lat_event('P', fault_pc);
+            lat_event('T', mach_thread_self() == game_thread_port);
+        }
+    }
     return block->fault_result[sequence % 256];
 }
 
@@ -174,6 +211,7 @@ static void *reply_thread(void *unused) {
             if (!atomic_load(&block->service_alive)) return NULL;
             continue;
         }
+        if (m.kind == PS4MAC_IRQ) lat_event('I', m.a);
         if (m.kind == PS4MAC_PROTECT) {
             /* The service's page tracking: synchronous for it (it waits for protect_done). */
             runtime_memory_gpu_protect((uintptr_t)m.a, m.b, (int)(m.c & 1), (int)((m.c >> 1) & 1));
@@ -204,7 +242,6 @@ static void *reply_thread(void *unused) {
 /* Diagnostic (SPARTAN_HANG_DUMP=1): when the guest sends the service nothing for 3 s after it
  * started, the game's main thread state, once: R&C's main thread spins at a GPU result
  * (rip 0x17fae80..0x17fae93 of the image: while (((float*)r15)[r13] == -1.0f) pause). */
-static mach_port_t game_thread_port;
 void runtime_bridge_note_game_thread(void) { game_thread_port = mach_thread_self(); }
 static void *hang_thread(void *unused) {
     (void)unused;
@@ -234,6 +271,60 @@ static void *hang_thread(void *unused) {
             send_message(&diag);
         }
         fflush(stderr);
+    }
+    return NULL;
+}
+
+static int lat_range(const char *env, uint64_t *lo, uint64_t *hi) {
+    const char *v = getenv(env);
+    return v && sscanf(v, "%llx-%llx", (unsigned long long *)lo, (unsigned long long *)hi) == 2;
+}
+static void *lat_thread(void *unused) {
+    (void)unused;
+    uint64_t wait_lo = 0, wait_hi = 0, pause_lo = 0, pause_hi = 0;
+    lat_range("SPARTAN_LAT_WAIT", &wait_lo, &wait_hi);
+    lat_range("SPARTAN_LAT_PAUSE", &pause_lo, &pause_hi);
+    uint64_t image_lo = 0, image_hi = 0; /* the game's code, for the render thread's state */
+    lat_range("SPARTAN_LAT_IMAGE", &image_lo, &image_hi);
+    const char *us_env = getenv("SPARTAN_LAT_US");
+    const long us = us_env ? atol(us_env) : 200;
+    int last = -1;
+    uint64_t last_flush = 0;
+    for (;;) {
+        struct timespec ts = {0, us * 1000}; nanosleep(&ts, NULL);
+        /* Not before the game submits graphics work: sampled during its start, the game hung
+         * there in 3 of 4 runs (before any submission, the known rare black screen otherwise). */
+        if (!game_thread_port || !render_thread_port) continue;
+        x86_thread_state64_t st; mach_msg_type_number_t n = x86_THREAD_STATE64_COUNT;
+        if (thread_get_state(game_thread_port, x86_THREAD_STATE64, (thread_state_t)&st, &n) != KERN_SUCCESS)
+            continue;
+        const int state = (st.__rip >= wait_lo && st.__rip < wait_hi) ? 1
+                        : (st.__rip >= pause_lo && st.__rip < pause_hi) ? 2 : 0;
+        if (state != last) lat_event('M', (uint64_t)state);
+        if (state == 1 && last != 1) { /* the address it waits on (R&C: r15 + 4 * r13), when it changes */
+            static uint64_t last_address;
+            const uint64_t address = st.__r15 + 4 * st.__r13;
+            if (address != last_address) lat_event('A', address);
+            last_address = address;
+        }
+        last = state;
+        if (render_thread_port) {
+            /* The render thread: in the game's code (1) or not (0: the runtime, its waits). */
+            static int last_render = -1;
+            x86_thread_state64_t rs; mach_msg_type_number_t rn = x86_THREAD_STATE64_COUNT;
+            if (thread_get_state(render_thread_port, x86_THREAD_STATE64, (thread_state_t)&rs, &rn) == KERN_SUCCESS) {
+                const int in_game = rs.__rip >= image_lo && rs.__rip < image_hi;
+                if (in_game != last_render) lat_event('R', (uint64_t)in_game);
+                last_render = in_game;
+            }
+        }
+        const uint64_t now = ps4mac_now_ns();
+        if (now - last_flush > 100000000ull) {
+            pthread_mutex_lock(&lat_lock);
+            fflush(lat_file);
+            pthread_mutex_unlock(&lat_lock);
+            last_flush = now;
+        }
     }
     return NULL;
 }
@@ -363,6 +454,15 @@ void runtime_bridge_start(void) {
             pthread_t hang_watcher;
             pthread_create(&hang_watcher, NULL, hang_thread, NULL);
             pthread_detach(hang_watcher);
+        }
+    }
+    {
+        const char *lat = getenv("SPARTAN_LATENCY");
+        if (lat && *lat && (lat_file = fopen(lat, "w"))) {
+            pthread_t sampler;
+            pthread_create(&sampler, NULL, lat_thread, NULL);
+            pthread_detach(sampler);
+            printf("Latency: guest timeline to %s\n", lat);
         }
     }
     pthread_detach(thread);

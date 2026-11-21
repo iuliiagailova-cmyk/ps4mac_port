@@ -90,9 +90,24 @@ void TextureCache::WatchReadback(VAddr address, u64 size) {
     }
 }
 
+// ps4mac_port diagnostic (SPARTAN_LAT_ADDR=<hex>, with SPARTAN_TRACE): trace marks for the
+// readbacks that cover a guest address the game waits on (tools/profile/latency.py).
+static bool LatWatched(VAddr address, u64 size) {
+    static const VAddr watched = [] {
+        const char* env = std::getenv("SPARTAN_LAT_ADDR");
+        return env ? VAddr(std::strtoull(env, nullptr, 16)) : VAddr{0};
+    }();
+    return watched && SpartanTrace::recording.load(std::memory_order_relaxed) &&
+           watched >= address && watched < address + size;
+}
+
 void TextureCache::RetireReadbacks() {
     pending_readbacks.Retire([this](u64 tick) { return scheduler.IsFree(tick); },
         [this](auto& entry) {
+            if (LatWatched(entry.address, entry.size)) {
+                SpartanTrace::Mark(entry.valid ? "watched readback published"
+                                               : "watched readback dropped", entry.tick);
+            }
             if (entry.valid) {
                 entry.payload.Invalidate();
                 Core::Memory::Instance()->TryWriteBacking(std::bit_cast<u8*>(entry.address),
@@ -308,6 +323,9 @@ void TextureCache::ProcessDownloadImages() {
                                      image.info.size.height, image.info.num_bits, slot->copies + 1,
                                      slot->cpu_accesses, image.info.pixel_format};
                         }
+                    }
+                    if (LatWatched(copy->guest_address, copy->size)) {
+                        SpartanTrace::Mark("watched readback queued", scheduler.CurrentTick());
                     }
                     pending_readbacks.Push(copy->guest_address, copy->size,
                         scheduler.CurrentTick(), copy->staging);

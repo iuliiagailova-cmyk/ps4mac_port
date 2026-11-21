@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "spartanport_trace.h"
 #include <chrono>
 #include <array>
 #include <map>
@@ -432,6 +433,17 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
             SpartanStats::buffer_upload_bytes.load(std::memory_order_relaxed) - uploaded_before;
     }
     if (is_written) {
+        // ps4mac_port diagnostic (SPARTAN_LAT_PAGE=<hex>, with SPARTAN_TRACE): GPU writes over a page.
+        static const VAddr lat_page = [] {
+            const char* env = std::getenv("SPARTAN_LAT_PAGE");
+            return env ? VAddr(std::strtoull(env, nullptr, 16)) : VAddr{0};
+        }();
+        if (lat_page && SpartanTrace::recording.load(std::memory_order_relaxed) &&
+            device_addr < lat_page + 4096 && lat_page < device_addr + size) {
+            SpartanTrace::Mark("GPU write over watched page: address", device_addr);
+            SpartanTrace::Mark("GPU write over watched page: size", size);
+            SpartanTrace::Mark("GPU write over watched page: texel", is_texel_buffer);
+        }
         gpu_modified_ranges.Add(device_addr, size);
         const u64 tick = scheduler.CurrentTick();
         for (u64 block = device_addr >> WRITE_TICK_SHIFT;

@@ -94,7 +94,7 @@ void Write() {
         std::printf("Trace: cannot write %s\n", g.path);
         return;
     }
-    std::fputs("{\"traceEvents\":[\n", f);
+    std::fprintf(f, "{\"base_ns\":%llu,\"traceEvents\":[\n", (unsigned long long)g.window_start.load());
     bool first = true;
     std::size_t count = 0;
     const std::uint64_t base = g.window_start.load();

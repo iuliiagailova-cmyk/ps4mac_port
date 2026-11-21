@@ -24,6 +24,7 @@
 #include "sdl_window.h"
 #include "spartanport_overlay.h"
 #include "spartanport_settings.h"
+#include "spartanport_trace.h"
 #include "common/thread.h"
 #include "core/libraries/videoout/driver.h"
 #include "core/platform.h"
@@ -306,6 +307,7 @@ extern "C" void ps4mac_gfx_server_start(void (*reply)(const Ps4macMessage*)) {
             id,
             [](InterruptId irq) {
                 const Ps4macMessage m{.kind = PS4MAC_IRQ, .a = static_cast<u64>(irq)};
+                SpartanTrace::Mark("irq to guest", static_cast<u64>(irq));
                 reply_to_guest(&m);
             },
             &uid);
@@ -316,6 +318,7 @@ extern "C" void ps4mac_gfx_server_start(void (*reply)(const Ps4macMessage*)) {
 /// One guest message (the service's ring thread). Returns 0 for kinds that are not Ps4mac::Gfx.
 extern "C" int ps4mac_gfx_server_handle(const Ps4macMessage* m) {
     auto* core = liverpool.get();
+    SpartanTrace::Mark("guest message", m->kind);
     switch (m->kind) {
     case 101 + 2: { // PS4MAC_DIAG_ADDRESS (bridge/ps4mac_ring.h)
         const VAddr address = m->a;
