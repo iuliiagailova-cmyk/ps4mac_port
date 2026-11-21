@@ -318,6 +318,8 @@ static void *host_start(void *p) {
     set_host_name(t->name);
     set_host_priority(t->name,t->attr.prio);
     if (!exit_setjmp(t)) t->result=t->entry(t->argument);
+    if (getenv("SPARTAN_THREAD_TRACE") || getenv("SPARTAN_HANG_DUMP")) /* start hangs: who left early */
+        printf("Runtime: guest thread '%s' ended (result %p)\n",t->name,t->result);
     runtime_thread_keys_cleanup();
     pthread_mutex_lock(&lock); t->finished=1; ++exited; pthread_mutex_unlock(&lock);
     return t->result;

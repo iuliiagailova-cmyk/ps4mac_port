@@ -40,7 +40,7 @@ int ps4mac_gfx_server_handle(const Ps4macMessage *m);
 Ps4macInput *runtime_bridge_input(void) { return block ? &block->input : NULL; }
 int ps4mac_gfx_server_check_port(uint32_t size, uint32_t labels, uint32_t groups, uint32_t slots);
 int ps4mac_gfx_server_hdr_supported(void);
-int ps4mac_gfx_server_fault(uintptr_t address, int is_write);
+int ps4mac_gfx_server_fault(uintptr_t address, int is_write, uint32_t store_size);
 uint64_t ps4mac_gfx_server_fault_drain_ns(void);
 uint64_t ps4mac_gfx_server_gpu_modified_faults(void);
 
@@ -154,8 +154,10 @@ static void handle(const Ps4macMessage *m) {
     case PS4MAC_WRITE_FAULT:
     case PS4MAC_READ_FAULT: {
         const uint64_t start = ps4mac_now_ns();
-        const int handled = atomic_load(&gfx_ready) &&
-                            ps4mac_gfx_server_fault((uintptr_t)m->a, m->kind == PS4MAC_WRITE_FAULT);
+        /* 0, 1, or 2 (the guest performs its store): not a boolean. */
+        const int handled = !atomic_load(&gfx_ready) ? 0 :
+                            ps4mac_gfx_server_fault((uintptr_t)m->a, m->kind == PS4MAC_WRITE_FAULT,
+                                                    (uint32_t)m->b); /* b: a store the guest can do itself */
         atomic_fetch_add_explicit(&block->stat_faults, 1, memory_order_relaxed);
         atomic_fetch_add_explicit(&block->stat_fault_handle_ns, ps4mac_now_ns() - start, memory_order_relaxed);
         atomic_store_explicit(&block->stat_fault_drain_ns, ps4mac_gfx_server_fault_drain_ns(), memory_order_relaxed);

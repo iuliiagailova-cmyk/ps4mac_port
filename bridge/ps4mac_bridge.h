@@ -32,7 +32,9 @@ enum Ps4macToGraphics {
     PS4MAC_MEMORY_MAP,           /* guest mapping appeared: a address, b size, c pool offset, d host prot */
     PS4MAC_MEMORY_UNMAP,         /* a address, b size */
     PS4MAC_MEMORY_INVALIDATE,    /* guest wrote memory without a fault (e.g. file reads) */
-    PS4MAC_WRITE_FAULT,          /* a address, sequence: the guest wrote a page the GPU protects;
+    PS4MAC_WRITE_FAULT,          /* a address, b size of a store the guest can perform itself
+                                  * (0: none), sequence: the guest wrote a page the GPU protects;
+                                  * result 2: perform the store, the page stays protected;
                                   * the result goes to the shared block (fault_done, fault_result) */
     PS4MAC_READ_FAULT,           /* the same for a read (a readback) */
     PS4MAC_MEMORY_PROTECT,       /* the guest changed protection: a address, b size, d host prot */

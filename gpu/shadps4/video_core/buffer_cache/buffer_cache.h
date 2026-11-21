@@ -142,6 +142,16 @@ private:
     std::unordered_map<VkDeviceMemory, u8*> mapped_backing;
     bool DownloadMapped(VAddr device_addr, u64 size);
 
+public:
+    /// ps4mac_port: a guest write fault whose store the guest can perform itself (its size, set
+    /// by the service's fault handler on its thread), and whether the cache left it to the guest:
+    /// the page stays the GPU's and protected, nothing is downloaded (see StoreMayBypass).
+    static inline thread_local u32 fault_store_size = 0;
+    static inline thread_local bool fault_store_emulated = false;
+
+private:
+    bool StoreMayBypass(VAddr address, u64 size);
+
     bool SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 size, bool is_written,
                            bool is_texel_buffer);
 

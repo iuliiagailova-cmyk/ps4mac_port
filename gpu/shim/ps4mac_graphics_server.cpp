@@ -29,6 +29,7 @@
 #include "core/libraries/videoout/driver.h"
 #include "core/platform.h"
 #include "ps4mac_graphics.h"
+#include "video_core/buffer_cache/buffer_cache.h"
 #include "spartanport_toggles.h"
 #include "video_core/amdgpu/liverpool.h"
 #include "video_core/renderer_vulkan/vk_presenter.h"
@@ -431,7 +432,9 @@ extern "C" uint64_t ps4mac_gfx_server_fault_drain_ns(void) {
 
 /// Step 3.4: a guest access to a page the GPU protects (PS4MAC_WRITE_FAULT/READ_FAULT), handled as
 /// page_manager.cpp's fault handler does in one process. Returns whether it was such a page.
-extern "C" int ps4mac_gfx_server_fault(uintptr_t address, int is_write) {
+/// Returns 0 (not a GPU page), 1 (handled: retry the access) or 2 (`store_size` > 0 only: the
+/// guest performs its store itself, the page stays protected; BufferCache::StoreMayBypass).
+extern "C" int ps4mac_gfx_server_fault(uintptr_t address, int is_write, uint32_t store_size) {
     auto& rasterizer = presenter->GetRasterizer();
     if (is_write) {
         SpartanStats::Timer timer{SpartanStats::t_write_faults};
@@ -448,7 +451,13 @@ extern "C" int ps4mac_gfx_server_fault(uintptr_t address, int is_write) {
             gpu_modified = rasterizer.IsRegionGpuModified(VAddr(address), 8);
         }
         const auto start = std::chrono::steady_clock::now();
-        const int handled = rasterizer.OnWriteFault(VAddr(address), false) ? 1 : 0;
+        VideoCore::BufferCache::fault_store_size = store_size;
+        VideoCore::BufferCache::fault_store_emulated = false;
+        int handled = rasterizer.OnWriteFault(VAddr(address), false) ? 1 : 0;
+        VideoCore::BufferCache::fault_store_size = 0;
+        if (handled && VideoCore::BufferCache::fault_store_emulated) {
+            handled = 2;
+        }
         if (gpu_modified) {
             fault_drain_ns.fetch_add(u64(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                              std::chrono::steady_clock::now() - start).count()),

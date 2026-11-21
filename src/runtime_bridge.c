@@ -21,6 +21,7 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/ucontext.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -28,6 +29,7 @@
 #include "../bridge/ps4mac_ring.h"
 
 int runtime_memory_region(uintptr_t address, uintptr_t *start, uintptr_t *end, int *mapped);
+int runtime_memory_write_backing(uintptr_t address, const void *data, uint64_t size);
 void runtime_memory_gpu_protect(uintptr_t address, uint64_t size, int read, int write);
 
 static Ps4macSharedBlock *block;
@@ -56,8 +58,10 @@ static void lat_event(char kind, uint64_t value) {
 }
 
 static _Atomic uint64_t messages_sent;
+static _Atomic int gfx_submitted; /* SPARTAN_HANG_DUMP=2 */
 static void send_message(const Ps4macMessage *m) {
     atomic_fetch_add_explicit(&messages_sent, 1, memory_order_relaxed);
+    if (m->kind == PS4MAC_SUBMIT_GFX) atomic_store_explicit(&gfx_submitted, 1, memory_order_relaxed);
     if (lat_file && m->kind == PS4MAC_SUBMIT_GFX && !render_thread_port)
         render_thread_port = mach_thread_self(); /* the thread that submits: the game's render thread */
     if (lat_file && m->kind != PS4MAC_MEMORY_MAP && m->kind != PS4MAC_MEMORY_UNMAP &&
@@ -158,14 +162,91 @@ int runtime_bridge_is_shared(uintptr_t address, uint64_t size) {
  * handler, gpu/shim/spartanportgpu.cpp). Returns whether it was a page the GPU protects; the
  * service has then changed the protection, and the access can be retried. */
 static uint32_t fault_sequence;
-static __thread uint64_t fault_pc; /* the faulting instruction (SPARTAN_LATENCY) */
-void runtime_bridge_fault_pc(uint64_t rip) { fault_pc = rip; }
+static __thread ucontext_t *fault_uc; /* the faulting thread's registers (signal context) */
+void runtime_bridge_fault_context(void *ucontext) { fault_uc = (ucontext_t *)ucontext; }
+
+/* A simple store at the fault's address, decoded from the faulting instruction: MOV r/m, reg and
+ * MOV r/m, imm (8 to 64 bits), the common forms of a counter or flag update. The service may let
+ * the guest perform it itself (result 2): the page stays protected (BufferCache::StoreMayBypass). */
+typedef struct { uint64_t value; unsigned size, length; } GuestStore;
+static uint64_t uc_gpr(const ucontext_t *uc, unsigned n) {
+    const _STRUCT_X86_THREAD_STATE64 *r = &uc->uc_mcontext->__ss;
+    switch (n) {
+    case 0: return r->__rax; case 1: return r->__rcx; case 2: return r->__rdx; case 3: return r->__rbx;
+    case 4: return r->__rsp; case 5: return r->__rbp; case 6: return r->__rsi; case 7: return r->__rdi;
+    case 8: return r->__r8; case 9: return r->__r9; case 10: return r->__r10; case 11: return r->__r11;
+    case 12: return r->__r12; case 13: return r->__r13; case 14: return r->__r14; default: return r->__r15;
+    }
+}
+static int decode_store(const ucontext_t *uc, uintptr_t address, GuestStore *out) {
+    const uint8_t *ip = (const uint8_t *)(uintptr_t)uc->uc_mcontext->__ss.__rip;
+    unsigned i = 0, op16 = 0, rex = 0;
+    for (;; ++i) {
+        if (i > 4) return 0;
+        if (ip[i] == 0x66) op16 = 1;
+        else if (ip[i] == 0x2e || ip[i] == 0x3e || ip[i] == 0x26 || ip[i] == 0x36) continue;
+        else break; /* fs/gs (0x64/0x65), lock, rep: not handled */
+    }
+    if ((ip[i] & 0xf0) == 0x40) rex = ip[i++];
+    const uint8_t op = ip[i++];
+    unsigned size;
+    if (op == 0x88 || op == 0xc6) size = 1;
+    else if (op == 0x89 || op == 0xc7) size = (rex & 8) ? 8 : op16 ? 2 : 4;
+    else return 0;
+    const uint8_t modrm = ip[i++];
+    const unsigned mod = modrm >> 6, reg = ((modrm >> 3) & 7) | ((rex & 4) << 1), rm = modrm & 7;
+    if (mod == 3) return 0;
+    if ((op == 0xc6 || op == 0xc7) && ((modrm >> 3) & 7) != 0) return 0;
+    uint64_t ea = 0;
+    int rip_relative = 0;
+    if (rm == 4) {
+        const uint8_t sib = ip[i++];
+        const unsigned index = ((sib >> 3) & 7) | ((rex & 2) << 2), base = (sib & 7) | ((rex & 1) << 3);
+        if (index != 4) ea += uc_gpr(uc, index) << (sib >> 6);
+        if ((sib & 7) == 5 && mod == 0) { int32_t d; memcpy(&d, ip + i, 4); i += 4; ea += (uint64_t)(int64_t)d; }
+        else ea += uc_gpr(uc, base);
+    } else if (rm == 5 && mod == 0) {
+        rip_relative = 1;
+    } else {
+        ea += uc_gpr(uc, rm | ((rex & 1) << 3));
+    }
+    if (mod == 1) { ea += (uint64_t)(int64_t)(int8_t)ip[i]; i += 1; }
+    else if (mod == 2 || rip_relative) { int32_t d; memcpy(&d, ip + i, 4); i += 4; ea += (uint64_t)(int64_t)d; }
+    uint64_t value;
+    if (op == 0x88) {
+        if (!rex && reg >= 4) return 0; /* AH..BH */
+        value = uc_gpr(uc, reg) & 0xff;
+    } else if (op == 0x89) {
+        value = uc_gpr(uc, reg);
+    } else if (op == 0xc6) {
+        value = ip[i++];
+    } else if (size == 2) {
+        uint16_t imm; memcpy(&imm, ip + i, 2); i += 2; value = imm;
+    } else {
+        int32_t imm; memcpy(&imm, ip + i, 4); i += 4; value = (uint64_t)(int64_t)imm;
+    }
+    if (rip_relative) ea += (uint64_t)(uintptr_t)ip + i;
+    if (ea != address) return 0; /* not the access that faulted */
+    out->value = value;
+    out->size = size;
+    out->length = i;
+    return 1;
+}
+
 int runtime_bridge_fault(uintptr_t address, int is_write) {
     if (!block || !remote_graphics || !runtime_bridge_is_shared(address, 1)) return 0;
     pthread_mutex_lock(&push_lock); /* sequences in ring order: the service answers in order */
     const uint32_t sequence = ++fault_sequence;
+    static int store_bypass = -1;
+    if (store_bypass < 0) {
+        const char *env = getenv("SPARTAN_STORE_BYPASS");
+        store_bypass = env && *env == '1'; /* off by default (BufferCache::StoreMayBypass) */
+    }
+    GuestStore store = {0};
+    const int can_store = is_write && store_bypass && fault_uc && decode_store(fault_uc, address, &store) &&
+                          (address & 4095) + store.size <= 4096;
     const Ps4macMessage m = {.kind = is_write ? PS4MAC_WRITE_FAULT : PS4MAC_READ_FAULT,
-                             .sequence = sequence, .a = address};
+                             .sequence = sequence, .a = address, .b = can_store ? store.size : 0};
     const int pushed = !ps4mac_ring_push(&block->to_graphics, &m, 2000000000ull);
     pthread_mutex_unlock(&push_lock);
     if (!pushed) return 0;
@@ -177,11 +258,23 @@ int runtime_bridge_fault(uintptr_t address, int is_write) {
         lat_event('F', waited * 2 + (uint64_t)(is_write != 0)); /* at its end */
         if (waited > 2000000) { /* a slow one: where, from which instruction, on the main thread? */
             lat_event('X', address);
-            lat_event('P', fault_pc);
+            lat_event('P', fault_uc ? fault_uc->uc_mcontext->__ss.__rip : 0);
             lat_event('T', mach_thread_self() == game_thread_port);
         }
     }
-    return block->fault_result[sequence % 256];
+    const int result = block->fault_result[sequence % 256];
+    if (result == 2 && can_store) {
+        /* The service left the store to us: the page stays protected, the GPU's bytes on it too. */
+        runtime_memory_write_backing(address, &store.value, store.size);
+        fault_uc->uc_mcontext->__ss.__rip += store.length;
+        static _Atomic uint64_t bypassed;
+        const uint64_t n = atomic_fetch_add_explicit(&bypassed, 1, memory_order_relaxed) + 1;
+        if ((n & (n - 1)) == 0 && n >= 64)
+            fprintf(stderr, "Bridge: %llu guest stores performed without the GPU's download\n",
+                    (unsigned long long)n);
+        return 1;
+    }
+    return result != 0;
 }
 
 static void *reply_thread(void *unused) {
@@ -243,13 +336,25 @@ static void *reply_thread(void *unused) {
  * started, the game's main thread state, once: R&C's main thread spins at a GPU result
  * (rip 0x17fae80..0x17fae93 of the image: while (((float*)r15)[r13] == -1.0f) pause). */
 void runtime_bridge_note_game_thread(void) { game_thread_port = mach_thread_self(); }
+/* SPARTAN_HANG_DUMP=2 also samples the main thread with thread_get_state every 200 us until the
+ * first graphics submission: that made the rare start hang (before any submission) frequent. */
+static void *start_stress_thread(void *unused) {
+    (void)unused;
+    while (!atomic_load(&gfx_submitted)) {
+        struct timespec ts = {0, 200000}; nanosleep(&ts, NULL);
+        if (!game_thread_port) continue;
+        x86_thread_state64_t st; mach_msg_type_number_t n = x86_THREAD_STATE64_COUNT;
+        thread_get_state(game_thread_port, x86_THREAD_STATE64, (thread_state_t)&st, &n);
+    }
+    return NULL;
+}
 static void *hang_thread(void *unused) {
     (void)unused;
     uint64_t last = 0; int quiet = 0, dumped = 0;
     for (;;) {
         struct timespec ts = {1, 0}; nanosleep(&ts, NULL);
         const uint64_t now = atomic_load_explicit(&messages_sent, memory_order_relaxed);
-        quiet = (now == last && now > 1000) ? quiet + 1 : 0;
+        quiet = (now == last && now > 0) ? quiet + 1 : 0; /* start hangs send ~20 messages */
         last = now;
         if (quiet < 3 || dumped || !game_thread_port) continue;
         dumped = 1;
@@ -262,6 +367,15 @@ static void *hang_thread(void *unused) {
                 (unsigned long long)st.__rip, (unsigned long long)st.__rsp, (unsigned long long)st.__rbx,
                 (unsigned long long)st.__r12, (unsigned long long)st.__r13, (unsigned long long)st.__r14,
                 (unsigned long long)st.__r15);
+        /* SPARTAN_HANG_PEEK=<hex address>[,...]: 32-bit values the game keeps there (e.g. a status) */
+        for (const char *peek = getenv("SPARTAN_HANG_PEEK"); peek && *peek;) {
+            char *end;
+            const uintptr_t address = (uintptr_t)strtoull(peek, &end, 16);
+            if (end == peek) break;
+            fprintf(stderr, "Hang dump: [%#llx] = %#x\n", (unsigned long long)address,
+                    *(volatile uint32_t *)address);
+            peek = *end == ',' ? end + 1 : end;
+        }
         if (st.__r15 > 0x10000 && st.__r13 < (1u << 26)) {
             const float *f = (const float *)(uintptr_t)st.__r15;
             fprintf(stderr, "Hang dump: wait address %#llx (r15 + 4*r13) holds %f; r15 base %#llx\n",
@@ -457,6 +571,12 @@ void runtime_bridge_start(void) {
             pthread_t hang_watcher;
             pthread_create(&hang_watcher, NULL, hang_thread, NULL);
             pthread_detach(hang_watcher);
+        } else if (hang && *hang == '2') {
+            pthread_t hang_watcher, stress;
+            pthread_create(&hang_watcher, NULL, hang_thread, NULL);
+            pthread_detach(hang_watcher);
+            pthread_create(&stress, NULL, start_stress_thread, NULL);
+            pthread_detach(stress);
         }
     }
     {

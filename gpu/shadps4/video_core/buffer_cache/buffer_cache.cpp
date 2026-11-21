@@ -158,8 +158,65 @@ void BufferCache::ExtendWriteFault(VAddr device_addr) {
     memory_tracker->ExtendWriteFault(Common::AlignDown(device_addr, window), window);
 }
 
+// ps4mac_port (SPARTAN_STORE_BYPASS=1, off by default: no FPS gain measured, see below): a guest store to a page the GPU writes, but
+// not to the GPU's bytes, need not wait for that GPU work. R&C's render thread bumps a counter
+// 0x20 bytes from 16 bytes a shader writes every frame, and each bump waited ~25 ms for the
+// frame's GPU work. The guest performs the store itself (through the backing view) and the page
+// stays protected: a later read of the GPU's bytes still faults and waits, as it must (fences are
+// written when the work is recorded, not done, so that protection is what keeps reads correct).
+// Measured in R&C's fight (21.11.2026): slow faults 25 -> 6-13 ms a frame, frame time unchanged
+// (36-46 ms either way): the render thread then spins in its own wait for the GPU's fence.
+bool BufferCache::StoreMayBypass(VAddr address, u64 size) {
+    static const bool enabled = [] {
+        const char* env = std::getenv("SPARTAN_STORE_BYPASS");
+        return env && env[0] == '1';
+    }();
+    if (!enabled) {
+        return false;
+    }
+    const VAddr page_start = Common::AlignDown(address, TRACKER_BYTES_PER_PAGE);
+    const VAddr page_end = Common::AlignUp(address + size, TRACKER_BYTES_PER_PAGE);
+    bool any = false, overlaps = false, unknown = false;
+    u64 newest = 0;
+    gpu_modified_ranges.ForEachInRange(page_start, page_end - page_start, [&](VAddr start, VAddr end) {
+        if (start >= end) {
+            return;
+        }
+        any = true;
+        overlaps |= start < address + size && address < end;
+        for (u64 block = start >> WRITE_TICK_SHIFT; block <= (end - 1) >> WRITE_TICK_SHIFT; ++block) {
+            const auto it = write_ticks.find(block);
+            if (it == write_ticks.end()) {
+                unknown = true;
+            } else {
+                newest = std::max(newest, it->second);
+            }
+        }
+    });
+    // Nothing known, the GPU's own bytes, or a writer already done (the download is quick and
+    // the page becomes the CPU's, as before): the usual path.
+    if (!any || overlaps || unknown || scheduler.IsFree(newest)) {
+        return false;
+    }
+    // A writer still being recorded is submitted now (without waiting): the download's wait
+    // used to submit it, and work left unsubmitted kept a guest storing in a loop at start-up
+    // faulting ~20k times a second. This runs on the GPU command thread with the pipe drained.
+    if (newest >= scheduler.CurrentTick()) {
+        SpartanTrace::Scope trace_scope{"store bypass: submit writer"};
+        scheduler.Flush();
+    }
+    SpartanTrace::Mark("guest store bypasses GPU download", address);
+    return true;
+}
+
 void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool assume_locks) {
-    const auto flush_request = [this, device_addr, size, is_write] {
+    const u32 store_size = is_write ? fault_store_size : 0;
+    bool store_bypassed = false;
+    const auto flush_request = [this, device_addr, size, is_write, store_size, &store_bypassed] {
+        if (store_size && StoreMayBypass(device_addr, store_size)) {
+            store_bypassed = true; // the page stays GPU-modified and protected
+            return;
+        }
         const u32 first_block = device_addr >> block_shift;
         const u32 last_block = (device_addr + size - 1) >> block_shift;
         const auto* arena = GetArena(first_block, last_block);
@@ -181,6 +238,9 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
         flush_request();
     } else {
         liverpool->SendCommand<true>(std::move(flush_request));
+    }
+    if (store_bypassed) {
+        fault_store_emulated = true;
     }
 }
 
