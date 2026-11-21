@@ -93,11 +93,16 @@ Liverpool::~Liverpool() {
 }
 
 void Liverpool::ProcessCommands() {
-    if (num_commands && rasterizer) {
-        rasterizer->DrainDrawPipe(Vulkan::DrawPipe::ReasonCommands); // spartanport: commands touch the caches
-    }
     // Process incoming commands with high priority
     while (num_commands) {
+        // spartanport: commands touch the caches and record commands, so the draw recording
+        // thread must be idle. ps4mac_port: drained before every command, not once before the
+        // loop: a command that arrived after that check (a fault's download, from the service's
+        // ring thread) ran while the draw thread recorded, and both swapped the scheduler's
+        // record chunk (SIGSEGV at 0x20040). Draining an idle pipe costs one atomic load.
+        if (rasterizer) {
+            rasterizer->DrainDrawPipe(Vulkan::DrawPipe::ReasonCommands);
+        }
         Common::UniqueFunction<void> callback{};
         {
             std::scoped_lock lk{submit_mutex};
