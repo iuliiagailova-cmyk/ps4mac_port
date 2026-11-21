@@ -19,6 +19,14 @@ using namespace Vulkan;
 
 Common::IncrementalIdProvider<u64> Image::global_image_uid{};
 
+static bool LeanImages() {
+    static const bool enabled = [] {
+        const char* env = std::getenv("SPARTAN_LEAN_IMAGES");
+        return env && env[0] == '1';
+    }();
+    return enabled;
+}
+
 static vk::ImageUsageFlags ImageUsageFlags(const Vulkan::Instance& instance,
                                            const ImageInfo& info) {
     vk::ImageUsageFlags usage = vk::ImageUsageFlagBits::eTransferSrc |
@@ -135,6 +143,8 @@ Image::Image(const Vulkan::Instance& instance, Vulkan::Runtime& runtime_,
     mip_hashes.resize(info.resources.levels);
     vk::ImageCreateFlags flags{vk::ImageCreateFlagBits::eMutableFormat |
                                vk::ImageCreateFlagBits::eExtendedUsage};
+    // ps4mac_port: see Image::lean. Not for depth (no storage usage anyway) or block formats.
+    const bool lean_image = LeanImages() && !info.props.is_block && !info.props.is_depth;
     if (info.props.is_volume) {
         flags |= vk::ImageCreateFlagBits::e2DArrayCompatible;
         if (instance.Is2dViewOf3dSupported()) {
@@ -146,6 +156,13 @@ Image::Image(const Vulkan::Instance& instance, Vulkan::Runtime& runtime_,
     }
 
     usage_flags = ImageUsageFlags(instance, info);
+    full_usage_flags = usage_flags;
+    full_create_flags = flags;
+    if (lean_image) {
+        lean = true;
+        usage_flags &= ~vk::ImageUsageFlagBits::eStorage;
+        flags &= ~(vk::ImageCreateFlagBits::eMutableFormat | vk::ImageCreateFlagBits::eExtendedUsage);
+    }
     format_features = FormatFeatureFlags(usage_flags);
     if (info.props.is_depth) {
         aspect_mask = vk::ImageAspectFlagBits::eDepth;
@@ -222,6 +239,9 @@ Image::~Image() = default;
 ImageView& Image::FindView(const ImageViewInfo& view_info, bool ensure_guest_samples) {
     if (ensure_guest_samples && backing->num_samples > 1 != info.num_samples > 1) {
         runtime->SetBackingSamples(this, info.num_samples);
+    }
+    if (lean && (view_info.is_storage || view_info.format != backing->image.image_ci.format)) {
+        runtime->UpgradeBacking(this);
     }
     const auto& view_infos = backing->image_view_infos;
     if (backing->last_view < view_infos.size() && view_infos[backing->last_view] == view_info) {

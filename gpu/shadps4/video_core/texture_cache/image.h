@@ -175,6 +175,12 @@ public:
 
     vk::ImageUsageFlags usage_flags;
     vk::FormatFeatureFlags2 format_features;
+    /// ps4mac_port (SPARTAN_LEAN_IMAGES=1): created without storage usage and mutable format, so
+    /// Apple GPUs can compress it; FindView moves it to a full backing (Runtime::UpgradeBacking)
+    /// the first time a view needs either.
+    bool lean = false;
+    vk::ImageUsageFlags full_usage_flags;
+    vk::ImageCreateFlags full_create_flags;
     struct State {
         vk::PipelineStageFlags2 pl_stage = vk::PipelineStageFlagBits2::eAllCommands;
         vk::AccessFlags2 access_mask = vk::AccessFlagBits2::eNone;

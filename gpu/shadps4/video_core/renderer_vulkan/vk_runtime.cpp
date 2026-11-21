@@ -722,6 +722,86 @@ void Runtime::ClearImage(VideoCore::Image* dst, const VideoCore::SubresourceRang
     dst->flags &= ~VideoCore::ImageFlagBits::Dirty;
 }
 
+void Runtime::UpgradeBacking(VideoCore::Image* image) {
+    if (!image->lean) {
+        return;
+    }
+    BeforeImageAccess();
+    image->lean = false;
+    auto* old_backing = image->backing;
+    auto new_image_ci = old_backing->image.image_ci;
+    new_image_ci.usage = image->full_usage_flags;
+    new_image_ci.flags = image->full_create_flags;
+    auto* new_backing = &image->backing_images.emplace_back();
+    new_backing->num_samples = old_backing->num_samples;
+    new_backing->image = VideoCore::UniqueImage{instance.GetDevice(), instance.GetAllocator()};
+    new_backing->image.Create(new_image_ci);
+    const auto& info = image->info;
+    Vulkan::SetObjectName(instance.GetDevice(), new_backing->image.image,
+                          "Image {}x{}x{} {} {:#x}:{:#x} L:{} M:{} S:{} (full usage)",
+                          info.size.width, info.size.height, info.size.depth,
+                          vk::to_string(info.pixel_format), info.guest_address, info.guest_size,
+                          info.resources.layers, info.resources.levels, info.num_samples);
+    static u64 upgrades = 0;
+    if (++upgrades <= 64) {
+        std::printf("GPU: lean image upgraded to full usage: %ux%u %s at %#llx\n", info.size.width,
+                    info.size.height, vk::to_string(info.pixel_format).c_str(),
+                    static_cast<unsigned long long>(info.guest_address));
+    }
+
+    scheduler.EndRendering();
+    // Contents are copied only when the old backing has any (its layout says it was written).
+    const bool has_contents = old_backing->state.layout != vk::ImageLayout::eUndefined;
+    if (has_contents) {
+        Transit(image, vk::ImageLayout::eTransferSrcOptimal, vk::PipelineStageFlagBits2::eTransfer,
+                vk::AccessFlagBits2::eTransferRead);
+    }
+    image_barriers.push_back(vk::ImageMemoryBarrier2{
+        .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+        .srcAccessMask = vk::AccessFlagBits2::eNone,
+        .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+        .dstAccessMask = vk::AccessFlagBits2::eTransferWrite,
+        .oldLayout = vk::ImageLayout::eUndefined,
+        .newLayout = vk::ImageLayout::eTransferDstOptimal,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = new_backing->image.image,
+        .subresourceRange{
+            .aspectMask = image->aspect_mask,
+            .baseMipLevel = 0,
+            .levelCount = VK_REMAINING_MIP_LEVELS,
+            .baseArrayLayer = 0,
+            .layerCount = VK_REMAINING_ARRAY_LAYERS,
+        },
+    });
+    FlushBarriers();
+    if (has_contents) {
+        std::vector<vk::ImageCopy> copies;
+        for (u32 mip = 0; mip < new_image_ci.mipLevels; ++mip) {
+            copies.push_back(vk::ImageCopy{
+                .srcSubresource{image->aspect_mask, mip, 0, new_image_ci.arrayLayers},
+                .dstSubresource{image->aspect_mask, mip, 0, new_image_ci.arrayLayers},
+                .extent{std::max(new_image_ci.extent.width >> mip, 1u),
+                        std::max(new_image_ci.extent.height >> mip, 1u),
+                        std::max(new_image_ci.extent.depth >> mip, 1u)},
+            });
+        }
+        scheduler.Record([src = vk::Image(old_backing->image.image),
+                          dst = vk::Image(new_backing->image.image),
+                          copies = std::move(copies)](vk::CommandBuffer cmdbuf) {
+            cmdbuf.copyImage(src, vk::ImageLayout::eTransferSrcOptimal, dst,
+                             vk::ImageLayout::eTransferDstOptimal, copies);
+        });
+    }
+    new_backing->state.layout = vk::ImageLayout::eTransferDstOptimal;
+    new_backing->state.access_mask = vk::AccessFlagBits2::eTransferWrite;
+    new_backing->state.pl_stage = vk::PipelineStageFlagBits2::eTransfer;
+    // The old backing stays (the GPU may still use it); no sample-count lookup finds it again.
+    old_backing->num_samples = ~0u;
+    image->backing = new_backing;
+    image->usage_flags = image->full_usage_flags;
+}
+
 void Runtime::SetBackingSamples(VideoCore::Image* image, u32 num_samples, bool copy_backing) {
     BeforeImageAccess();
     auto& backing = image->backing;
