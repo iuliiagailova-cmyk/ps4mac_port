@@ -1,3 +1,4 @@
+#include <execinfo.h>
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -131,6 +132,15 @@ StagingBufferRef StagingBufferPool::RequestLarge(u64 size, MemoryType type, bool
     }
 
     if (!best) {
+        static const bool diag = std::getenv("SPARTAN_STAGING_DIAG") != nullptr;
+        if (diag && size >= 32_MB) {
+            std::printf("Staging: new %llu MiB buffer for a %llu MiB request (deferred %d)\n",
+                        (unsigned long long)(RoundAllocationSize(size) >> 20),
+                        (unsigned long long)(size >> 20), int(deferred));
+            void* frames[16];
+            std::fflush(stdout);
+            backtrace_symbols_fd(frames, backtrace(frames, 16), 1);
+        }
         best = &cache.emplace_back(LargeBuffer{
             .buffer = std::make_unique<VideoCore::Buffer>(instance, 0, RoundAllocationSize(size),
                                                           type, "StagingBufferPool:Dedicated"),
