@@ -29,6 +29,7 @@
 #include "../bridge/ps4mac_ring.h"
 
 int runtime_memory_region(uintptr_t address, uintptr_t *start, uintptr_t *end, int *mapped);
+void runtime_mutex_dump_trace(FILE *out, unsigned count);
 int runtime_memory_write_backing(uintptr_t address, const void *data, uint64_t size);
 void runtime_memory_gpu_protect(uintptr_t address, uint64_t size, int read, int write);
 
@@ -376,6 +377,7 @@ static void *hang_thread(void *unused) {
                     *(volatile uint32_t *)address);
             peek = *end == ',' ? end + 1 : end;
         }
+        runtime_mutex_dump_trace(stderr, 400);
         if (st.__r15 > 0x10000 && st.__r13 < (1u << 26)) {
             const float *f = (const float *)(uintptr_t)st.__r15;
             fprintf(stderr, "Hang dump: wait address %#llx (r15 + 4*r13) holds %f; r15 base %#llx\n",

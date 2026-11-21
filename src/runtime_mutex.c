@@ -8,7 +8,12 @@
 #include <errno.h>
 #include <time.h>
 typedef struct { int type; } GuestAttr;
-typedef struct { pthread_mutex_t native; } GuestMutex;
+/* locked_seq: when the current holder took it (lock_seq order), for the late signal below. */
+typedef struct { pthread_mutex_t native; uint64_t locked_seq; } GuestMutex;
+static uint64_t lock_seq; /* orders mutex acquisitions and condition variable signals */
+static void note_locked(GuestMutex *m) {
+    __atomic_store_n(&m->locked_seq, __atomic_add_fetch(&lock_seq, 1, __ATOMIC_SEQ_CST), __ATOMIC_SEQ_CST);
+}
 static size_t created, locks, unlocks;
 static int32_t orbis_error(int e) {
     if (!e) return 0;
@@ -23,6 +28,44 @@ static int32_t orbis_error(int e) {
     default: fprintf(stderr, "STOP: unmapped host pthread error %d\n", e); exit(21);
     }
     return (int32_t)(UINT32_C(0x80020000) | code);
+}
+/* SPARTAN_HANG_DUMP: the last scePthread mutex/cond operations, kept in memory (no output while
+ * the game runs, so the timing stays) and printed by the hang dump (runtime_mutex_dump_trace). */
+enum { SYNC_TRACE = 4096 };
+typedef struct { uint64_t ns; const void *handle, *other; char thread[16]; char op; int32_t result; } SyncEvent;
+static SyncEvent sync_trace[SYNC_TRACE];
+static uint64_t sync_next;
+static int sync_tracing(void) {
+    static int on = -1;
+    if (on < 0) on = getenv("SPARTAN_HANG_DUMP") != NULL;
+    return on;
+}
+static __thread char sync_thread_name[16];
+static void sync_event(char op, const void *handle, const void *other, int32_t result) {
+    if (!sync_tracing()) return;
+    if (!sync_thread_name[0] && pthread_getname_np(pthread_self(), sync_thread_name, sizeof(sync_thread_name)))
+        snprintf(sync_thread_name, sizeof(sync_thread_name), "?");
+    if (!sync_thread_name[0]) snprintf(sync_thread_name, sizeof(sync_thread_name), "main");
+    /* Idle job workers wait with a timeout all the time and would push the rest out. */
+    if (!strncmp(sync_thread_name, "Job Thread", 10)) return;
+    SyncEvent *e = &sync_trace[__atomic_fetch_add(&sync_next, 1, __ATOMIC_RELAXED) % SYNC_TRACE];
+    struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
+    e->ns = (uint64_t)t.tv_sec * 1000000000u + (uint64_t)t.tv_nsec;
+    e->handle = handle; e->other = other; e->op = op; e->result = result;
+    memcpy(e->thread, sync_thread_name, sizeof(e->thread));
+}
+void runtime_mutex_dump_trace(FILE *out, unsigned count) {
+    const uint64_t end = __atomic_load_n(&sync_next, __ATOMIC_RELAXED);
+    const uint64_t start = end > count ? end - count : 0;
+    fprintf(out, "Sync trace: last %llu of %llu mutex/cond operations (L lock, U unlock, T trylock, "
+                 "W cond wait, w wait returned, l wait ended by an earlier signal, S signal, B broadcast, I mutex init, C cond init)\n",
+            (unsigned long long)(end - start), (unsigned long long)end);
+    for (uint64_t i = start; i < end; ++i) {
+        const SyncEvent *e = &sync_trace[i % SYNC_TRACE];
+        fprintf(out, "Sync trace: %llu.%06llu %-15.15s %c %p %p -> %#x\n",
+                (unsigned long long)(e->ns / 1000000000u), (unsigned long long)(e->ns % 1000000000u / 1000),
+                e->thread, e->op, e->handle, e->other, (unsigned)e->result);
+    }
 }
 static ABI int32_t attr_init(GuestAttr **out) {
     if (!out) return orbis_error(EINVAL);
@@ -58,7 +101,8 @@ static ABI int32_t mutex_init(GuestMutex **out, GuestAttr **attr, const char *na
     if (!e) e = pthread_mutex_init(&mutex->native, &native_attr);
     pthread_mutexattr_destroy(&native_attr);
     if (e) { free(mutex); return orbis_error(e); }
-    *out = mutex; ++created; return 0;
+    mutex->locked_seq = 0;
+    *out = mutex; ++created; sync_event('I', out, mutex, 0); return 0;
 }
 static pthread_mutex_t static_init = PTHREAD_MUTEX_INITIALIZER;
 /* Statically initialized handles (0/1) are created once, even under contention. */
@@ -81,14 +125,16 @@ static ABI int32_t mutex_lock(GuestMutex **mutex) {
     int32_t e = ensure_mutex(mutex);
     if (e) return e;
     e = orbis_error(pthread_mutex_lock(&(*mutex)->native));
-    if (!e) ++locks;
+    if (!e) { ++locks; note_locked(*mutex); }
+    sync_event('L', mutex, *mutex, e);
     return e;
 }
 static ABI int32_t mutex_trylock(GuestMutex **mutex) {
     int32_t e = ensure_mutex(mutex);
     if (e) return e;
     e = orbis_error(pthread_mutex_trylock(&(*mutex)->native));
-    if (!e) ++locks;
+    if (!e) { ++locks; note_locked(*mutex); }
+    sync_event('T', mutex, *mutex, e);
     return e;
 }
 static ABI int32_t mutex_unlock(GuestMutex **mutex) {
@@ -96,6 +142,7 @@ static ABI int32_t mutex_unlock(GuestMutex **mutex) {
     if ((uintptr_t)*mutex < 2) return orbis_error(EPERM);
     int32_t e = orbis_error(pthread_mutex_unlock(&(*mutex)->native));
     if (!e) ++unlocks;
+    sync_event('U', mutex, *mutex, e);
     return e;
 }
 static ABI int32_t mutex_destroy(GuestMutex **mutex) {
@@ -119,13 +166,50 @@ static ABI int32_t mutex_timedlock(GuestMutex **mutex, uint32_t usec) {
     struct timespec end;
     if (deadline_after(&end, usec)) return orbis_error(EINVAL);
     e = timed_error(pthread_mutex_timedlock(&(*mutex)->native, &end));
-    if (!e) ++locks;
+    if (!e) { ++locks; note_locked(*mutex); }
     return e;
 }
 /* Condition variables: opaque handles over host pthread_cond (CLOCK_REALTIME,
  * like FreeBSD's default), sharing the host mutex behind GuestMutex. */
-typedef struct { pthread_cond_t native; } GuestCond;
-static size_t conds, waits, wakeups;
+typedef struct { pthread_cond_t native; uint64_t late_signal_ns, late_signal_seq; int waited; } GuestCond;
+static size_t conds, waits, wakeups, late_wakeups;
+/* The start handshake of a new thread, as the PS4 scheduler orders it. Ratchet & Clank's NpToolkit
+ * start locks a mutex, creates 'Toolkit::NP' (priority 700), then waits on a new condition
+ * variable without a predicate; the new thread signals it without taking that mutex. On PS4 the
+ * new thread does not run before its creator waits; on the host it starts at once on another
+ * core, and in ~2% of starts (1 in 10 with the main thread sampled) its signal came 0.2 ms before
+ * the wait, and the game hung for good. So a signal sent before anyone has ever waited on the
+ * condition variable ends its first wait, if it comes within 50 ms and the waiter has held its
+ * mutex since before the signal (it was on its way to the wait). Any wider rule (a recent signal
+ * ends the next wait) broke other waits of the game without a predicate (4 crashes in 30 starts).
+ * SPARTAN_COND_LATE_SIGNAL=0 turns it off. */
+enum { LATE_SIGNAL_NS = 50000000 };
+static uint64_t cond_now_ns(void) {
+    struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
+    return (uint64_t)t.tv_sec * 1000000000u + (uint64_t)t.tv_nsec + 1; /* never 0 */
+}
+static int late_signals(void) {
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("SPARTAN_COND_LATE_SIGNAL"); on = !(e && e[0] == '0'); }
+    return on;
+}
+static void note_signal(GuestCond *c) {
+    if (!late_signals() || __atomic_load_n(&c->waited, __ATOMIC_SEQ_CST)) return;
+    __atomic_store_n(&c->late_signal_seq, __atomic_add_fetch(&lock_seq, 1, __ATOMIC_SEQ_CST), __ATOMIC_SEQ_CST);
+    __atomic_store_n(&c->late_signal_ns, cond_now_ns(), __ATOMIC_SEQ_CST);
+}
+/* At the start of a wait: whether it is the first wait on c and a signal came before it, as above. */
+static int take_late_signal(GuestCond *c, GuestMutex *m) {
+    if (__atomic_exchange_n(&c->waited, 1, __ATOMIC_SEQ_CST)) return 0;
+    const uint64_t at = __atomic_load_n(&c->late_signal_ns, __ATOMIC_SEQ_CST);
+    if (!at || cond_now_ns() - at > LATE_SIGNAL_NS) return 0;
+    if (__atomic_load_n(&m->locked_seq, __ATOMIC_SEQ_CST) >= __atomic_load_n(&c->late_signal_seq, __ATOMIC_SEQ_CST))
+        return 0;
+    ++late_wakeups;
+    printf("Runtime: condition variable %p: its first wait ended by the signal sent %.2f ms before it "
+           "(a thread start handshake)\n", (void *)c, (double)(cond_now_ns() - at) / 1e6);
+    return 1;
+}
 static ABI int32_t cond_init(GuestCond **out, void **attr, const char *name) {
     (void)attr; (void)name;
     if (!out) return orbis_error(EINVAL);
@@ -133,7 +217,9 @@ static ABI int32_t cond_init(GuestCond **out, void **attr, const char *name) {
     if (!c) return orbis_error(ENOMEM);
     int e = pthread_cond_init(&c->native, NULL);
     if (e) { free(c); return orbis_error(e); }
-    *out = c; ++conds; return 0;
+    c->late_signal_ns = c->late_signal_seq = 0;
+    c->waited = 0;
+    *out = c; ++conds; sync_event('C', out, c, 0); return 0;
 }
 static int32_t ensure_cond(GuestCond **cond) {
     if (!cond) return orbis_error(EINVAL);
@@ -160,14 +246,24 @@ static ABI int32_t cond_wait(GuestCond **cond, GuestMutex **mutex) {
     if (e) return e;
     if (!mutex || (uintptr_t)*mutex < 3) return orbis_error(EINVAL);
     ++waits;
-    return orbis_error(pthread_cond_wait(&(*cond)->native, &(*mutex)->native));
+    sync_event('W', cond, mutex, 0);
+    if (take_late_signal(*cond, *mutex)) { sync_event('l', cond, mutex, 0); return 0; }
+    e = orbis_error(pthread_cond_wait(&(*cond)->native, &(*mutex)->native));
+    note_locked(*mutex);
+    sync_event('w', cond, mutex, e);
+    return e;
 }
 static int32_t cond_wait_until(GuestCond **cond, GuestMutex **mutex, const struct timespec *end) {
     int32_t e = ensure_cond(cond);
     if (e) return e;
     if (!mutex || (uintptr_t)*mutex < 3 || !end) return orbis_error(EINVAL);
     ++waits;
-    return timed_error(pthread_cond_timedwait(&(*cond)->native, &(*mutex)->native, end));
+    sync_event('W', cond, mutex, 1);
+    if (take_late_signal(*cond, *mutex)) { sync_event('l', cond, mutex, 0); return 0; }
+    e = timed_error(pthread_cond_timedwait(&(*cond)->native, &(*mutex)->native, end));
+    note_locked(*mutex);
+    sync_event('w', cond, mutex, e);
+    return e;
 }
 static ABI int32_t cond_timedwait(GuestCond **cond, GuestMutex **mutex, uint32_t usec) {
     struct timespec end;
@@ -177,12 +273,14 @@ static ABI int32_t cond_timedwait(GuestCond **cond, GuestMutex **mutex, uint32_t
 static ABI int32_t cond_signal(GuestCond **cond) {
     int32_t e = ensure_cond(cond);
     if (e) return e;
-    ++wakeups; return orbis_error(pthread_cond_signal(&(*cond)->native));
+    ++wakeups; sync_event('S', cond, *cond, 0); note_signal(*cond);
+    return orbis_error(pthread_cond_signal(&(*cond)->native));
 }
 static ABI int32_t cond_broadcast(GuestCond **cond) {
     int32_t e = ensure_cond(cond);
     if (e) return e;
-    ++wakeups; return orbis_error(pthread_cond_broadcast(&(*cond)->native));
+    ++wakeups; sync_event('B', cond, *cond, 0); note_signal(*cond);
+    return orbis_error(pthread_cond_broadcast(&(*cond)->native));
 }
 /* PS4 struct timespec is {int64 sec, int64 nsec}, identical to Linux x86-64. */
 typedef struct { int64_t sec, nsec; } GuestTimespec;
@@ -254,6 +352,7 @@ uintptr_t runtime_mutex_resolve(const char *name) {
 }
 void runtime_mutex_report(void) {
     printf("Runtime: mutexes created=%zu, locks=%zu, unlocks=%zu\n", created, locks, unlocks);
-    printf("Runtime: condition variables created=%zu, waits=%zu, wakeups=%zu\n", conds, waits, wakeups);
+    printf("Runtime: condition variables created=%zu, waits=%zu, wakeups=%zu, first waits ended by an earlier signal=%zu\n",
+           conds, waits, wakeups, late_wakeups);
 }
 
