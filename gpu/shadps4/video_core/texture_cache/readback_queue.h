@@ -32,6 +32,12 @@ public:
         }
         return tick;
     }
+    template <typename Func>
+    void ForEachPending(Func&& func) const {
+        for (const auto& entry : entries) {
+            if (entry.valid) func(entry);
+        }
+    }
     template <typename Callback>
     void Cancel(std::uint64_t address, std::uint64_t size, Callback&& cancel) {
         for (auto& entry : entries) {

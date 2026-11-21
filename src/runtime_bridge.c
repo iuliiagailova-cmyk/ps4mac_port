@@ -284,6 +284,8 @@ static void *lat_thread(void *unused) {
     uint64_t wait_lo = 0, wait_hi = 0, pause_lo = 0, pause_hi = 0;
     lat_range("SPARTAN_LAT_WAIT", &wait_lo, &wait_hi);
     lat_range("SPARTAN_LAT_PAUSE", &pause_lo, &pause_hi);
+    const char *rips_env = getenv("SPARTAN_LAT_RIPS");
+    const int log_rips = rips_env && *rips_env == '1';
     uint64_t image_lo = 0, image_hi = 0; /* the game's code, for the render thread's state */
     lat_range("SPARTAN_LAT_IMAGE", &image_lo, &image_hi);
     const char *us_env = getenv("SPARTAN_LAT_US");
@@ -314,6 +316,7 @@ static void *lat_thread(void *unused) {
             x86_thread_state64_t rs; mach_msg_type_number_t rn = x86_THREAD_STATE64_COUNT;
             if (thread_get_state(render_thread_port, x86_THREAD_STATE64, (thread_state_t)&rs, &rn) == KERN_SUCCESS) {
                 const int in_game = rs.__rip >= image_lo && rs.__rip < image_hi;
+                if (log_rips && in_game) lat_event('Q', rs.__rip); /* SPARTAN_LAT_RIPS=1: where */
                 if (in_game != last_render) lat_event('R', (uint64_t)in_game);
                 last_render = in_game;
             }

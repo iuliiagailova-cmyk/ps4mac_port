@@ -151,6 +151,18 @@ bool TextureCache::ResolveReadbacks(VAddr address, u64 size, bool assume_locks,
         if (const u64 tick = pending_readbacks.RequiredTick(address, size)) {
             ++readbacks_waited;
             waited = !scheduler.IsFree(tick);
+            if (waited && SpartanTrace::recording.load(std::memory_order_relaxed)) {
+                // ps4mac_port: who waits (ReadbackSource), for which range, on which copies.
+                SpartanTrace::Mark("readback wait: source", static_cast<u64>(source));
+                SpartanTrace::Mark("readback wait: address", address);
+                SpartanTrace::Mark("readback wait: size", size);
+                pending_readbacks.ForEachPending([&](const auto& entry) {
+                    if (entry.tick == tick) {
+                        SpartanTrace::Mark("readback wait: copy at", entry.address);
+                        SpartanTrace::Mark("readback wait: copy size", entry.size);
+                    }
+                });
+            }
             const auto start = diag ? std::chrono::steady_clock::now()
                                     : std::chrono::steady_clock::time_point{};
             scheduler.Wait(tick);
