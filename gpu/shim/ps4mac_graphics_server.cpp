@@ -32,8 +32,14 @@
 #include "video_core/amdgpu/liverpool.h"
 #include "video_core/renderer_vulkan/vk_presenter.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
+#include "video_core/renderer_vulkan/vk_wait_diagnostics.h"
 
 extern "C" Ps4macInput* runtime_bridge_input(void); // the service: its block (step 3.5)
+
+namespace Vulkan {
+extern std::atomic<u64> g_spartanport_compile_ns;
+extern std::atomic<u32> g_spartanport_compiles;
+} // vk_pipeline_cache.cpp
 
 extern std::unique_ptr<Vulkan::Presenter> presenter;
 extern std::unique_ptr<AmdGpu::Liverpool> liverpool;
@@ -84,6 +90,60 @@ void PrintPresentStats() {
                 presented_game / seconds, presented_blank / seconds, repeats_skipped / seconds);
     presented_game = presented_blank = repeats_skipped = 0;
     window = now;
+    Vulkan::WaitDiagnostics::Report(); // SPARTAN_PERF_DIAG=1: GPU waits by call site (the guest's copy is empty)
+}
+
+// Micro-stutter diagnostics (SPARTAN_FRAME_STATS): the guest's Stall lines read counters of its own
+// process, and with the service they live here. A gap between two game frames longer than
+// SPARTAN_STALL_MS (40) prints what the service did in it; at most 10 per 5 s.
+void ReportStall() {
+    static const bool stats = std::getenv("SPARTAN_FRAME_STATS") != nullptr;
+    if (!stats) {
+        return;
+    }
+    static const double stall_ms = [] {
+        const char* value = std::getenv("SPARTAN_STALL_MS");
+        return value ? std::atof(value) : 40.0;
+    }();
+    using Clock = std::chrono::steady_clock;
+    static Clock::time_point last{}, window = Clock::now();
+    static u32 shown;
+    enum { Compiles, CompileNs, Readback, Ticks, Recorder, HostCopies, ImageCreate, Refresh, Staging,
+           Gc, Draws, Dispatches, Submissions, ReadFaults, ReadFaultNs, WriteFaultNs, Count };
+    const u64 now_values[Count] = {
+        u64(Vulkan::g_spartanport_compiles.load()), u64(Vulkan::g_spartanport_compile_ns.load()),
+        SpartanStats::t_readback_wait.load(), SpartanStats::tick_wait_ns.load(),
+        SpartanStats::sync_recording_ns.load(), SpartanStats::host_copies_wait_ns.load(),
+        SpartanStats::t_image_create.load(), SpartanStats::t_refresh.load(), SpartanStats::t_staging.load(),
+        SpartanStats::t_gc.load(), SpartanStats::draws.load(), SpartanStats::dispatches.load(),
+        SpartanStats::submissions.load(), SpartanStats::read_faults.load(),
+        SpartanStats::t_read_faults.load(), SpartanStats::t_write_faults.load()};
+    static u64 previous[Count];
+    const auto now = Clock::now();
+    if (now - window >= std::chrono::seconds(5)) {
+        window = now;
+        shown = 0;
+    }
+    const double gap_ms = std::chrono::duration<double, std::milli>(now - last).count();
+    if (last != Clock::time_point{} && gap_ms > stall_ms && shown < 10) {
+        ++shown;
+        u64 d[Count];
+        for (int i = 0; i < Count; ++i) {
+            d[i] = now_values[i] - previous[i];
+        }
+        std::fprintf(stderr,
+                     "Service stall: %.1f ms between game frames; %llu compiles %.1f ms; waits: readback "
+                     "%.1f, GPU ticks %.1f, recorder %.1f, host copies %.1f ms; image create %.1f, refresh "
+                     "%.1f, staging %.1f, GC %.1f ms; %llu draws, %llu dispatches, %llu submissions; "
+                     "%llu read faults %.1f ms, write faults %.1f ms\n",
+                     gap_ms, (unsigned long long)d[Compiles], d[CompileNs] / 1e6, d[Readback] / 1e6,
+                     d[Ticks] / 1e6, d[Recorder] / 1e6, d[HostCopies] / 1e6, d[ImageCreate] / 1e6,
+                     d[Refresh] / 1e6, d[Staging] / 1e6, d[Gc] / 1e6, (unsigned long long)d[Draws],
+                     (unsigned long long)d[Dispatches], (unsigned long long)d[Submissions],
+                     (unsigned long long)d[ReadFaults], d[ReadFaultNs] / 1e6, d[WriteFaultNs] / 1e6);
+    }
+    std::copy(std::begin(now_values), std::end(now_values), std::begin(previous));
+    last = now;
 }
 
 // The present thread's work, in message order.
@@ -121,6 +181,9 @@ void PresentThread() {
             if (frame) {
                 presenter->Present(frame, (m.b & 1) != 0, (m.b & 2) != 0);
                 ++((m.b & 2) ? presented_game : presented_blank);
+                if (m.b & 2) {
+                    ReportStall();
+                }
             }
             Reply(m.sequence, 0);
             PrintPresentStats();
