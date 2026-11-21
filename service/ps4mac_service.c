@@ -36,6 +36,8 @@ static pthread_mutex_t to_guest_lock = PTHREAD_MUTEX_INITIALIZER; /* the ring ha
 
 int spartanportgpu_service_init(const SpartanGpuConfig *config, void (*reply)(const Ps4macMessage *));
 int ps4mac_gfx_server_handle(const Ps4macMessage *m);
+/* Step 3.5: the video core publishes the window's input here for the guest. */
+Ps4macInput *runtime_bridge_input(void) { return block ? &block->input : NULL; }
 int ps4mac_gfx_server_check_port(uint32_t size, uint32_t labels, uint32_t groups, uint32_t slots);
 int ps4mac_gfx_server_hdr_supported(void);
 int ps4mac_gfx_server_fault(uintptr_t address, int is_write);

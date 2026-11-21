@@ -64,6 +64,7 @@ typedef struct {
     _Atomic uint64_t stat_faults, stat_fault_handle_ns;              /* service: handling a fault */
     _Atomic uint64_t stat_fault_wait_ns;                              /* guest: a fault's round trip */
     _Atomic uint64_t stat_fault_drain_ns;                             /* service: of it, the draw pipe drain */
+    _Alignas(64) Ps4macInput input;   /* step 3.5 */
     Ps4macSharedRing to_graphics;
     Ps4macSharedRing to_guest;
 } Ps4macSharedBlock;

@@ -97,6 +97,8 @@ static int remote_graphics;
 
 /* For the GPU library's Ps4mac::Gfx client (gpu/shim/ps4mac_graphics.cpp). */
 int runtime_bridge_remote_graphics(void) { return remote_graphics; }
+/* Step 3.5: the service's window input (NULL in one process). */
+Ps4macInput *runtime_bridge_input(void) { return remote_graphics && block ? &block->input : NULL; }
 void runtime_bridge_send(const Ps4macMessage *m) { send_message(m); }
 void runtime_bridge_set_handler(void (*handler)(const Ps4macMessage *)) { message_handler = handler; }
 /* The guest's VideoOutPort layout, for the service's check (both builds must agree). */
@@ -330,6 +332,7 @@ void runtime_bridge_start(void) {
 #else
 void runtime_bridge_start(void) {}
 int runtime_bridge_remote_graphics(void) { return 0; }
+struct Ps4macInput *runtime_bridge_input(void) { return NULL; }
 int runtime_bridge_fault(uintptr_t address, int is_write) { (void)address; (void)is_write; return 0; }
 int runtime_bridge_gpu_init(const char *title, const char *serial, const char *user_dir, uint32_t sdk_version,
                             uint32_t psf_attributes, int32_t width, int32_t height) {

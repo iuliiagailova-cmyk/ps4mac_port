@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define PS4MAC_BRIDGE_VERSION 4u
+#define PS4MAC_BRIDGE_VERSION 5u
 
 /* Guest -> graphics, in order (submissions and memory changes share one ring: a submission
  * must see the mappings made before it). Messages with PS4MAC_FLAG_REPLY get a PS4MAC_REPLY
@@ -48,6 +48,13 @@ enum Ps4macToGraphics {
     PS4MAC_GFX_PREPARE_LAST,     /* c frame id (may prepare nothing) */
     PS4MAC_GFX_PRESENT,          /* a frame id, b reusing | game << 1, c hdr + 1 or 0; reply when shown */
     PS4MAC_GFX_SET_GAMMA,        /* a float bits */
+    /* Step 3.5: */
+    PS4MAC_GFX_UI_ACTION,        /* a Ps4macUiAction: a pad shortcut the service's menu and window act on */
+};
+
+enum Ps4macUiAction {
+    PS4MAC_UI_MOUSE_PAUSE = 1,   /* the pause key: the window lets the mouse go or takes it back */
+    PS4MAC_UI_ENGINE_FPS_CYCLE,  /* R3 + L1 + R1: the next engine frame rate */
 };
 
 /* Graphics -> guest. */
@@ -80,6 +87,30 @@ typedef struct Ps4macRing {
     /* Ps4macMessage slots[capacity] follow */
 } Ps4macRing;
 #endif
+
+/* Atomics both languages lay out alike (clang: std::atomic<T> wraps _Atomic T for these types). */
+#ifdef __cplusplus
+}
+#include <atomic>
+#define PS4MAC_ATOMIC(T) std::atomic<T>
+extern "C" {
+#else
+#define PS4MAC_ATOMIC(T) _Atomic T
+#endif
+
+/* Step 3.5: the service's window input and in-game menu state, written by the service (window
+ * thread) and read by the guest's pad (src/runtime_pad.c) and gpu library getters. Counters only
+ * grow: the reader keeps the last values it saw. */
+typedef struct Ps4macInput {
+    PS4MAC_ATOMIC(uint32_t) ready;            /* the service publishes input */
+    PS4MAC_ATOMIC(uint32_t) overlay_captures; /* the menu, a choice list or a text dialog has the input */
+    PS4MAC_ATOMIC(uint32_t) mouse_buttons;    /* SDL_MouseButtonFlags */
+    PS4MAC_ATOMIC(uint32_t) wheel_notches[2]; /* up, down */
+    PS4MAC_ATOMIC(int32_t) motion[2];         /* x, y in 1/16 px */
+    /* Settings the menu changes that the guest reads (SpartanSettings). */
+    PS4MAC_ATOMIC(int32_t) vibration, mouse_prompt_distance, mouse_aim_style, mouse_aim_sensitivity;
+    PS4MAC_ATOMIC(uint8_t) keys[512];         /* SDL scancodes: 1 while down */
+} Ps4macInput;
 
 /* Channels that already are narrow C seams in one process; the two-process build implements
  * each with the messages above (src/runtime.h, gpu/shim/spartanportgpu.cpp):

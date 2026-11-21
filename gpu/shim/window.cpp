@@ -7,6 +7,7 @@
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include "sdl_window.h"
+#include "ps4mac_graphics.h"
 #include "spartanport_overlay.h"
 #include "spartanport_graphics.h"
 #include "spartanport_settings.h"
@@ -232,6 +233,7 @@ bool WindowSDL::PollEvents() {
         show ? SDL_ShowCursor() : SDL_HideCursor();
         cursor_shown = show;
     }
+    Ps4mac::Gfx::PublishInput(window); // ps4mac_port step 3.5: the service's input for the guest
     return is_open;
 }
 

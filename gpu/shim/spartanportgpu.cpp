@@ -480,7 +480,12 @@ ScreenshotRequests ConsumeScreenshotRequests() {
 }
 } // namespace VideoCore
 
+// ps4mac_port step 3.5: with the graphics service the menu is the service's; these read what it
+// publishes in the shared block.
 extern "C" int spartanportgpu_vibration_percent(void) {
+    if (const Ps4macInput* input = Ps4mac::Gfx::GuestInput()) {
+        return input->vibration.load(std::memory_order_relaxed);
+    }
     return SpartanSettings::Get().vibration.load(std::memory_order_relaxed);
 }
 
@@ -489,14 +494,23 @@ extern "C" void spartanportgpu_movie_picture(void) {
 }
 
 extern "C" int spartanportgpu_mouse_prompt_distance(void) {
+    if (const Ps4macInput* input = Ps4mac::Gfx::GuestInput()) {
+        return input->mouse_prompt_distance.load(std::memory_order_relaxed);
+    }
     return SpartanSettings::Get().mouse_prompt_distance.load(std::memory_order_relaxed);
 }
 
 extern "C" int spartanportgpu_mouse_aim_style(void) {
+    if (const Ps4macInput* input = Ps4mac::Gfx::GuestInput()) {
+        return input->mouse_aim_style.load(std::memory_order_relaxed);
+    }
     return SpartanSettings::Get().mouse_aim_style.load(std::memory_order_relaxed);
 }
 
 extern "C" int spartanportgpu_mouse_aim_sensitivity(void) {
+    if (const Ps4macInput* input = Ps4mac::Gfx::GuestInput()) {
+        return input->mouse_aim_sensitivity.load(std::memory_order_relaxed);
+    }
     return SpartanSettings::Get().mouse_aim_sensitivity.load(std::memory_order_relaxed);
 }
 
@@ -511,14 +525,25 @@ extern "C" void spartanport_qte_status(int supported) {
 }
 
 extern "C" void spartanportgpu_mouse_pause_key(void) {
+    if (Ps4mac::Gfx::Remote()) {
+        Ps4mac::Gfx::UiAction(PS4MAC_UI_MOUSE_PAUSE);
+        return;
+    }
     Frontend::ToggleMousePause();
 }
 
 extern "C" int spartanportgpu_overlay_captures_input(void) {
+    if (const Ps4macInput* input = Ps4mac::Gfx::GuestInput()) {
+        return input->overlay_captures.load(std::memory_order_relaxed) ? 1 : 0;
+    }
     return SpartanOverlay::CapturesInput() ? 1 : 0;
 }
 
 extern "C" void spartanportgpu_engine_fps_cycle(void) {
+    if (Ps4mac::Gfx::Remote()) {
+        Ps4mac::Gfx::UiAction(PS4MAC_UI_ENGINE_FPS_CYCLE);
+        return;
+    }
     SpartanOverlay::CycleEngineFps();
 }
 

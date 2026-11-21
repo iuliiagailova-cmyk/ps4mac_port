@@ -27,6 +27,7 @@ void runtime_bridge_send(const Ps4macMessage* m);
 void runtime_bridge_set_handler(void (*handler)(const Ps4macMessage*));
 int runtime_bridge_is_shared(uintptr_t address, uint64_t size);
 int runtime_bridge_wait_graphics(void);
+Ps4macInput* runtime_bridge_input(void); // step 3.5
 void* runtime_low_map(size_t size, int prot);
 }
 
@@ -130,6 +131,18 @@ const u32* SharedSpan(std::span<const u32> span) {
 bool Remote() {
     // Not cached: the window's main loop may ask before the runtime has started the bridge.
     return runtime_bridge_remote_graphics() != 0;
+}
+
+const Ps4macInput* GuestInput() {
+    if (!Remote()) {
+        return nullptr;
+    }
+    const Ps4macInput* input = runtime_bridge_input();
+    return input && input->ready.load(std::memory_order_acquire) ? input : nullptr;
+}
+
+void UiAction(int action) {
+    Post({.kind = PS4MAC_GFX_UI_ACTION, .a = u64(action)});
 }
 
 void StartRemote() {

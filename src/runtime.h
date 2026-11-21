@@ -97,6 +97,7 @@ int runtime_bridge_gpu_init(const char *title, const char *serial, const char *u
  * whether a range is memory the service maps too. */
 struct Ps4macMessage;
 int runtime_bridge_remote_graphics(void);
+struct Ps4macInput *runtime_bridge_input(void); /* step 3.5: the service's window input, or NULL */
 void runtime_bridge_send(const struct Ps4macMessage *m);
 void runtime_bridge_set_handler(void (*handler)(const struct Ps4macMessage *));
 void runtime_bridge_set_vo_layout(uint32_t size, uint32_t labels, uint32_t groups, uint32_t slots);

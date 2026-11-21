@@ -7,6 +7,7 @@
 //    flips are prepared there;
 //  - presentation: on a present thread of its own, so a swapchain wait never holds up the ring;
 //  - interrupts (EOP, flip, GPU idle, compute): forwarded to the guest's IrqC.
+#include <algorithm>
 #include <bit>
 #include <chrono>
 #include <cstdio>
@@ -16,8 +17,13 @@
 #include <mutex>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 
+#include <SDL3/SDL.h>
 #include "../../bridge/ps4mac_bridge.h"
+#include "sdl_window.h"
+#include "spartanport_overlay.h"
+#include "spartanport_settings.h"
 #include "common/thread.h"
 #include "core/libraries/videoout/driver.h"
 #include "core/platform.h"
@@ -26,6 +32,8 @@
 #include "video_core/amdgpu/liverpool.h"
 #include "video_core/renderer_vulkan/vk_presenter.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
+
+extern "C" Ps4macInput* runtime_bridge_input(void); // the service: its block (step 3.5)
 
 extern std::unique_ptr<Vulkan::Presenter> presenter;
 extern std::unique_ptr<AmdGpu::Liverpool> liverpool;
@@ -137,6 +145,84 @@ namespace Ps4mac::Gfx {
 bool IsServer() {
     return reply_to_guest != nullptr;
 }
+
+namespace {
+// Step 3.5: wheel notches and mouse motion as they arrive (an event watch sees every event,
+// the menu's too: the guest drops them while the menu has the input).
+bool SDLCALL WatchInput(void* userdata, SDL_Event* event) {
+    auto* input = static_cast<Ps4macInput*>(userdata);
+    if (event->type == SDL_EVENT_MOUSE_MOTION) {
+        input->motion[0].fetch_add(int(event->motion.xrel * 16.0f), std::memory_order_relaxed);
+        input->motion[1].fetch_add(int(event->motion.yrel * 16.0f), std::memory_order_relaxed);
+    } else if (event->type == SDL_EVENT_MOUSE_WHEEL) {
+        int steps = event->wheel.integer_y;
+        if (event->wheel.direction == SDL_MOUSEWHEEL_FLIPPED) {
+            steps = -steps;
+        }
+        input->wheel_notches[steps < 0].fetch_add(u32(steps < 0 ? -steps : steps),
+                                                  std::memory_order_relaxed);
+    }
+    return true;
+}
+std::atomic<bool> gamepads_changed{true};
+bool SDLCALL WatchGamepads(void*, SDL_Event* event) {
+    if (event->type == SDL_EVENT_GAMEPAD_ADDED) {
+        gamepads_changed.store(true, std::memory_order_relaxed);
+    }
+    return true;
+}
+} // namespace
+
+void PublishInput(void* sdl_window) {
+    if (!IsServer()) {
+        return;
+    }
+    Ps4macInput* input = runtime_bridge_input();
+    if (!input) {
+        return;
+    }
+    static bool watching = [input] {
+        SDL_AddEventWatch(WatchInput, input);
+        SDL_AddEventWatch(WatchGamepads, nullptr);
+        return true;
+    }();
+    (void)watching;
+    // The guest reads the gamepad itself; the service opens it too, so that its events reach the
+    // menu (R3+L2 opens it, the pad moves through it). Two processes may read one controller.
+    if (gamepads_changed.exchange(false, std::memory_order_relaxed)) {
+        static std::vector<SDL_JoystickID> opened;
+        int count = 0;
+        if (SDL_JoystickID* ids = SDL_GetGamepads(&count)) {
+            for (int i = 0; i < count; ++i) {
+                if (std::find(opened.begin(), opened.end(), ids[i]) == opened.end() &&
+                    SDL_OpenGamepad(ids[i])) {
+                    opened.push_back(ids[i]);
+                }
+            }
+            SDL_free(ids);
+        }
+    }
+    auto* window = static_cast<SDL_Window*>(sdl_window);
+    const bool focused = window && (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS);
+    int count = 0;
+    const bool* keys = SDL_GetKeyboardState(&count);
+    count = std::min<int>(count, std::size(input->keys));
+    for (int i = 0; i < count; ++i) {
+        input->keys[i].store(focused && keys[i] ? 1 : 0, std::memory_order_relaxed);
+    }
+    input->mouse_buttons.store(focused ? u32(SDL_GetMouseState(nullptr, nullptr)) : 0,
+                               std::memory_order_relaxed);
+    input->overlay_captures.store(SpartanOverlay::CapturesInput() ? 1 : 0, std::memory_order_relaxed);
+    const auto& settings = SpartanSettings::Get();
+    input->vibration.store(settings.vibration.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    input->mouse_prompt_distance.store(settings.mouse_prompt_distance.load(std::memory_order_relaxed),
+                                       std::memory_order_relaxed);
+    input->mouse_aim_style.store(settings.mouse_aim_style.load(std::memory_order_relaxed),
+                                 std::memory_order_relaxed);
+    input->mouse_aim_sensitivity.store(settings.mouse_aim_sensitivity.load(std::memory_order_relaxed),
+                                       std::memory_order_relaxed);
+    input->ready.store(1, std::memory_order_release);
+}
 } // namespace Ps4mac::Gfx
 
 extern "C" void ps4mac_gfx_server_start(void (*reply)(const Ps4macMessage*)) {
@@ -162,6 +248,13 @@ extern "C" void ps4mac_gfx_server_start(void (*reply)(const Ps4macMessage*)) {
 extern "C" int ps4mac_gfx_server_handle(const Ps4macMessage* m) {
     auto* core = liverpool.get();
     switch (m->kind) {
+    case PS4MAC_GFX_UI_ACTION:
+        if (m->a == PS4MAC_UI_MOUSE_PAUSE) {
+            Frontend::ToggleMousePause();
+        } else if (m->a == PS4MAC_UI_ENGINE_FPS_CYCLE) {
+            SpartanOverlay::CycleEngineFps();
+        }
+        return 1;
     case PS4MAC_SUBMIT_GFX:
         core->SubmitGfx({reinterpret_cast<const u32*>(m->a), size_t(m->b)},
                         {reinterpret_cast<const u32*>(m->c), size_t(m->d)});

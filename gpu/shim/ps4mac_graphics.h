@@ -16,6 +16,8 @@ struct BufferAttributeGroup;
 struct VideoOutPort;
 } // namespace Libraries::VideoOut
 
+struct Ps4macInput; // bridge/ps4mac_bridge.h (step 3.5)
+
 namespace Ps4mac::Gfx {
 
 /// The graphics service renders (step 3.3c): calls go over the bridge; this process has no
@@ -66,5 +68,14 @@ void SetGamma(float gamma);
 /// Runs `task` on the graphics command thread, in order with submissions.
 void RunOnGraphicsThread(std::function<void()> task);
 void ReportCompilerStats();
+
+// --- Step 3.5: input and the in-game menu live with the service's window.
+/// Guest: the service's window input in the shared block once the service publishes it, else
+/// nullptr (one process, or not ready yet).
+const Ps4macInput* GuestInput();
+/// Guest: a pad shortcut the service's window and menu act on (Ps4macUiAction).
+void UiAction(int action);
+/// Service: the window thread publishes its input after handling its events.
+void PublishInput(void* sdl_window);
 
 } // namespace Ps4mac::Gfx

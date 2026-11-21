@@ -11,6 +11,8 @@
 #define _GNU_SOURCE
 #include "runtime.h"
 #include "gpu/spartanportgpu.h"
+#include "../bridge/ps4mac_bridge.h"
+#include <stdatomic.h>
 #include "qte_hook.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -202,8 +204,44 @@ static bool SDLCALL mouse_watch(void *userdata, SDL_Event *event) {
     for (int n=steps<0 ? -steps : steps; n>0 && SDL_GetAtomicInt(ticks)<WHEEL_MAX_PENDING; --n) SDL_AddAtomicInt(ticks,1);
     return true;
 }
+/* Step 3.5: with the graphics service the window is the service's: keyboard, mouse buttons,
+ * wheel notches and mouse motion come from the shared block it publishes (runtime_bridge_input). */
+static const Ps4macInput *remote_input(void) {
+    const Ps4macInput *in=runtime_bridge_input();
+    return in && atomic_load_explicit(&in->ready,memory_order_acquire) ? in : NULL;
+}
+static bool remote_keys[512];
+static const bool *host_keys(void) {
+    const Ps4macInput *in=remote_input();
+    if (in) {
+        for (size_t i=0;i<sizeof(remote_keys);++i) remote_keys[i]=atomic_load_explicit(&in->keys[i],memory_order_relaxed)!=0;
+        return remote_keys;
+    }
+    return SDL_WasInit(SDL_INIT_VIDEO) ? SDL_GetKeyboardState(NULL) : NULL;
+}
+static SDL_MouseButtonFlags host_mouse(void) {
+    const Ps4macInput *in=remote_input();
+    return in ? (SDL_MouseButtonFlags)atomic_load_explicit(&in->mouse_buttons,memory_order_relaxed) : SDL_GetMouseState(NULL,NULL);
+}
+/* The service's counters only grow: new notches and motion since the last read. */
+static void poll_remote_mouse(const Ps4macInput *in) {
+    static uint32_t seen_notches[2]; static int32_t seen_motion[2]; static bool seen;
+    for (int i=0;i<2;++i) {
+        const uint32_t notches=atomic_load_explicit(&in->wheel_notches[i],memory_order_relaxed);
+        const int32_t motion=atomic_load_explicit(&in->motion[i],memory_order_relaxed);
+        if (seen) {
+            for (uint32_t n=notches-seen_notches[i]; n>0 && SDL_GetAtomicInt(&wheel_ticks[i])<WHEEL_MAX_PENDING; --n)
+                SDL_AddAtomicInt(&wheel_ticks[i],1);
+            SDL_AddAtomicInt(&mouse_motion[i],(int)(motion-seen_motion[i]));
+        }
+        seen_notches[i]=notches; seen_motion[i]=motion;
+    }
+    seen=true;
+}
 static void watch_wheel(void) {
     static bool watching;
+    const Ps4macInput *in=remote_input();
+    if (in) { poll_remote_mouse(in); return; }
     if (watching || !SDL_WasInit(SDL_INIT_VIDEO)) return;
     watching=SDL_AddEventWatch(mouse_watch,NULL);
 }
@@ -461,7 +499,7 @@ static void sample_host(PadData *d) {
     SDL_Gamepad *g=current_gamepad();
     watch_wheel();
     if (spartanportgpu_overlay_captures_input()) { drop_wheel(); return; } /* settings menu open: neutral input */
-    const bool *k=SDL_WasInit(SDL_INIT_VIDEO) ? SDL_GetKeyboardState(NULL) : NULL;
+    const bool *k=host_keys();
     load_button_maps();
     if (g) {
         for (size_t i=0;i<pad_map.count;++i)
@@ -489,7 +527,7 @@ static void sample_host(PadData *d) {
     /* The keyboard works with or without a gamepad: its buttons add to the pad's, and a stick
      * follows the keys only while one of them is held. */
     if (!k) return;
-    const SDL_MouseButtonFlags mouse=SDL_GetMouseState(NULL,NULL);
+    const SDL_MouseButtonFlags mouse=host_mouse();
     const bool wheel[2]={wheel_held(0,d->timestamp),wheel_held(1,d->timestamp)};
     for (size_t i=0;i<key_map.count;++i)
         if (source_down(key_map.entries[i].source,k,mouse,wheel)) d->buttons|=key_map.entries[i].ps;
@@ -555,7 +593,7 @@ static void record_sample(const PadData *d) {
     static const char *path; static int checked, f9_was_down;
     if (!checked) { path=getenv("SPARTAN_PAD_RECORD"); checked=1; }
     if (!path || !*path || !sdl_ready) return;
-    const bool *k=SDL_GetKeyboardState(NULL);
+    const bool *k=host_keys();
     const int f9=k && k[SDL_SCANCODE_F9];
     if (f9 && !f9_was_down) {
         if (record_file) {
