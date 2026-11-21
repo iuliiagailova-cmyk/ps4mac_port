@@ -17,9 +17,11 @@ app_ver = "01.00"
 # other (readbacks are published as soon as the GPU completes them).
 SPARTAN_DEFERRED_READBACK = "1"
 SPARTAN_STALE_READBACK = "1"
-# Submit every 100 draws/dispatches: the GPU starts while the frame is still recorded
-# (first level on an M1: 5.8 -> 7.9 FPS; 30 and 300 were slower).
-SPARTAN_FLUSH_DRAWS = "100"
+# Submit every 30 draws/dispatches: the GPU starts while the frame is still recorded, and the
+# game, which waits every frame for its own GPU work (faults on GPU-written pages), waits less.
+# 22.11.2026, 720p service mode: level 25.5 -> 29.7 FPS, fight start 41 -> 36.6 ms a frame
+# (50: 37.9 ms; a submission per guest submit: 46-53 ms). At 8 FPS (20.11) 100 was best.
+SPARTAN_FLUSH_DRAWS = "30"
 # Buffer hazards between draws inside a render pass follow the game's own sync (cache flush events,
 # AcquireMem) instead of breaking the pass: ~25 fewer render passes a frame on the tiled M1 GPU
 # (level 10.7 -> 13.7 FPS, fight 9.4 -> 11.6; service mode 10.8 -> 13.4, 10.3 -> 12.7).
