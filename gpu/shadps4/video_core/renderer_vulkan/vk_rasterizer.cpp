@@ -3601,6 +3601,22 @@ void Rasterizer::UpdateViewportScissorState() const {
         scissors.push_back(empty_scissor);
     }
 
+    // Diagnostic (SPARTAN_DIAG_RASTER_FRACTION=f, 0 < f < 1): every draw rasterizes only the
+    // top-left f x f of its scissor, so fragment work shrinks by f^2 while vertex, compute and
+    // render pass loads/stores stay. The FPS gain bounds what a lower render resolution could give
+    // through the fragment stage. The picture is wrong by design.
+    static const float raster_fraction = [] {
+        const char* env = std::getenv("SPARTAN_DIAG_RASTER_FRACTION");
+        const float f = env ? float(std::atof(env)) : 0.f;
+        return f > 0.f && f < 1.f ? f : 1.f;
+    }();
+    if (raster_fraction != 1.f) {
+        for (auto& scissor : scissors) {
+            scissor.extent.width = std::max(1u, u32(float(scissor.extent.width) * raster_fraction));
+            scissor.extent.height = std::max(1u, u32(float(scissor.extent.height) * raster_fraction));
+        }
+    }
+
     auto& dynamic_state = scheduler.GetDynamicState();
     dynamic_state.SetViewports(viewports);
     dynamic_state.SetScissors(scissors);
