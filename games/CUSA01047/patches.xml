@@ -10,7 +10,14 @@
      0xe4-0xfc00000000 for the runtime and low memory, the window an arm64 graphics service shares).
      Patched: the 4 movabs of the base (slot to address), the 3 movabs of 2^63 - base (address to
      slot) and the 4 slot counts. The other 59 uses of 0x1000000000 in the eboot are feature flag
-     masks (bit 36) and are left alone. -->
+     masks (bit 36) and are left alone.
+     "Resolution Patch - <name>": the game's render settings start from a default (image offset
+     0x177ca90: mov dword [rdi], 1920; mov dword [rdi+4], 1080; three flags; a null pointer) and the
+     game renders its scene at that size, scaling the picture to its own 1920x1080 output buffers
+     itself. The two immediates change; nothing else does. run.py picks the patch from
+     render_resolution in spartanport.ini (in-game menu, launcher), which also sizes the window.
+     M1 8 GB, service mode: first level 16.4 FPS native, 20.1 at 900p, 30 (the game's cap) at 720p;
+     fight 15.0, 18.8 and ~23. -->
 <Patch>
     <TitleID>
         <ID>CUSA01047</ID>
@@ -28,6 +35,24 @@
             <Line Type="bytes" Address="0x012bda64" Value="c8000000"/>
             <Line Type="bytes" Address="0x012bddd1" Value="c8000000"/>
             <Line Type="bytes" Address="0x012bde8b" Value="c8000000"/>
+        </PatchList>
+    </Metadata>
+    <Metadata Title="Ratchet" Name="Resolution Patch - 480p" Note="Renders the game at 854x480 instead of 1920x1080; the game scales the picture to its 1920x1080 output." Author="Iuliia Gailova" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x01b7ca92" Value="56030000" Pattern="c7 07 80 07 00 00 c7 47 04 38 04 00 00 c6 47 08 00" At="2"/>
+            <Line Type="bytes" Address="0x01b7ca99" Value="e0010000" Pattern="c7 07 80 07 00 00 c7 47 04 38 04 00 00 c6 47 08 00" At="9"/>
+        </PatchList>
+    </Metadata>
+    <Metadata Title="Ratchet" Name="Resolution Patch - 720p" Note="Renders the game at 1280x720 instead of 1920x1080; the game scales the picture to its 1920x1080 output." Author="Iuliia Gailova" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x01b7ca92" Value="00050000" Pattern="c7 07 80 07 00 00 c7 47 04 38 04 00 00 c6 47 08 00" At="2"/>
+            <Line Type="bytes" Address="0x01b7ca99" Value="d0020000" Pattern="c7 07 80 07 00 00 c7 47 04 38 04 00 00 c6 47 08 00" At="9"/>
+        </PatchList>
+    </Metadata>
+    <Metadata Title="Ratchet" Name="Resolution Patch - 900p" Note="Renders the game at 1600x900 instead of 1920x1080; the game scales the picture to its 1920x1080 output." Author="Iuliia Gailova" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x01b7ca92" Value="40060000" Pattern="c7 07 80 07 00 00 c7 47 04 38 04 00 00 c6 47 08 00" At="2"/>
+            <Line Type="bytes" Address="0x01b7ca99" Value="84030000" Pattern="c7 07 80 07 00 00 c7 47 04 38 04 00 00 c6 47 08 00" At="9"/>
         </PatchList>
     </Metadata>
 </Patch>
