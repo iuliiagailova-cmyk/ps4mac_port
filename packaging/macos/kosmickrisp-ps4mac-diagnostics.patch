@@ -1,5 +1,5 @@
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index 22f4bf7f..ab6900ed 100644
+index 22f4bf7f..e6cecfdf 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 @@ -1,3 +1,7 @@
@@ -46,7 +46,7 @@ index 22f4bf7f..ab6900ed 100644
  kk_encoder_update_debug(struct kk_cmd_buffer *cmd, mtl_command_encoder *encoder)
  {
 +   if (kk_label_encoders() && kk_next_encoder_label.cmd == cmd &&
-+       kk_next_encoder_label.label[0]) {
++       kk_next_encoder_label.label[0] && encoder == cmd->metal.render) {
 +      mtl_encoder_set_label(encoder, kk_next_encoder_label.label);
 +      kk_next_encoder_label.label[0] = 0;
 +      util_dynarray_foreach(&cmd->vk.labels, VkDebugUtilsLabelEXT, label)
