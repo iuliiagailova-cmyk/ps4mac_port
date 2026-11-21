@@ -1388,7 +1388,11 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                     if (Ps4mac::Gfx::IsServer()) {
                         // ps4mac_port: the port is the guest's (shared memory); its mutex and
                         // condition variable belong to the guest process. The label is polled.
+                        // Commands run meanwhile: the label comes after a present, a message
+                        // the service's ring thread delivers, and that thread may itself be
+                        // waiting for a command here (an unmap): the game froze at a video.
                         while (!wait_reg_mem->Test(regs.reg_array)) {
+                            ProcessCommands();
                             std::this_thread::sleep_for(std::chrono::microseconds(50));
                         }
                     } else {
