@@ -1296,6 +1296,7 @@ int main(int argc, char **argv) {
 typedef struct { int argc; char **argv; } ProbeArguments;
 static void *probe_thread(void *p) {
     const ProbeArguments *arguments = p;
+    runtime_bridge_note_game_thread();
     exit(probe_main(arguments->argc, arguments->argv));
 }
 int main(int argc, char **argv) {

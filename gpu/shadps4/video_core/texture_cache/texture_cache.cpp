@@ -152,12 +152,46 @@ bool TextureCache::ResolveReadbacks(VAddr address, u64 size, bool assume_locks,
     return true;
 }
 
+// ps4mac_port diagnostic (SPARTAN_READBACK_DIAG=1): lost readbacks. R&C's main thread spins
+// until a GPU result lands in guest memory; one lost readback froze it in fights.
+static bool ReadbackDiag() {
+    static const bool on = std::getenv("SPARTAN_READBACK_DIAG") != nullptr;
+    return on;
+}
+
+void TextureCache::DiagAddress(VAddr address) {
+    std::printf("Diag %#llx: deferred readbacks %d, stale %d\n", (unsigned long long)address,
+                int(deferred_readbacks), int(stale_readbacks));
+    ForEachImageInRegion(address, 4, [&](ImageId id, Image& image) {
+        bool queued = false;
+        {
+            std::unique_lock lk{download_images_mutex};
+            queued = download_images.contains(id);
+        }
+        std::printf("Diag   image %u at %#llx %ux%u fmt %s tiled %d flags %#x (GpuModified %d) queued %d\n",
+                    id.index, (unsigned long long)image.info.guest_address, image.info.size.width,
+                    image.info.size.height, vk::to_string(image.info.pixel_format).c_str(),
+                    int(image.info.props.is_tiled), u32(image.flags),
+                    int(True(image.flags & ImageFlagBits::GpuModified)), int(queued));
+    });
+    std::scoped_lock lock{readback_mutex};
+    std::printf("Diag   pending readback tick over it: %llu (scheduler tick %llu, free %d)\n",
+                (unsigned long long)pending_readbacks.RequiredTick(address, 4),
+                (unsigned long long)scheduler.CurrentTick(),
+                int(scheduler.IsFree(pending_readbacks.RequiredTick(address, 4))));
+}
+
 void TextureCache::CancelReadbacks(VAddr address, u64 size) {
     if (!deferred_readbacks) return;
     std::scoped_lock lock{readback_mutex};
-    pending_readbacks.Cancel(address, size, [this](auto& entry) {
+    pending_readbacks.Cancel(address, size, [this, address, size](auto& entry) {
         if (entry.watched) WatchReadback<false>(entry.address, entry.size);
         ++readbacks_canceled;
+        if (ReadbackDiag()) {
+            std::printf("Readback diag: canceled %#llx+%llu (by %#llx+%llu)\n",
+                        (unsigned long long)entry.address, (unsigned long long)entry.size,
+                        (unsigned long long)address, (unsigned long long)size);
+        }
     });
 }
 
@@ -238,7 +272,14 @@ void TextureCache::ProcessDownloadImages() {
         std::unique_lock lock{download_images_mutex};
         for (const ImageId image_id : download_images) {
             const auto& image = slot_images[image_id];
-            if (False(image.flags & ImageFlagBits::GpuModified)) continue;
+            if (False(image.flags & ImageFlagBits::GpuModified)) {
+                if (ReadbackDiag()) {
+                    std::printf("Readback diag: skipped %#llx %ux%u (not GPU-modified at EOP)\n",
+                                (unsigned long long)image.info.guest_address, image.info.size.width,
+                                image.info.size.height);
+                }
+                continue;
+            }
             const u64 size = u64{image.info.pitch} * image.info.size.height *
                 image.info.size.depth * image.info.resources.layers * (image.info.num_bits / 8);
             if (!pending_readbacks.CanFit(size)) {
@@ -278,9 +319,14 @@ void TextureCache::ProcessDownloadImages() {
                         const char* env = std::getenv("SPARTAN_READBACK_RETIRE");
                         return !(env && env[0] == '0');
                     }();
-                    if (retire_on_completion && !retire_queued.exchange(true)) {
+                    // ps4mac_port: one retire per copy tick. A single retire in flight at a
+                    // time (a flag) dropped copies queued while it waited: it retired the older
+                    // ones and cleared the flag, and nothing retired the newer copy until the next
+                    // EOP or access. R&C's main thread spins on such a result (a 480x200 R32F
+                    // image's last texel): with no frame to come, it froze in fights.
+                    const u64 tick = scheduler.CurrentTick();
+                    if (retire_on_completion && retire_queued_tick.exchange(tick) != tick) {
                         scheduler.DeferPriorityOperation([this] {
-                            retire_queued.store(false);
                             std::scoped_lock lock{readback_mutex};
                             RetireReadbacks();
                         });

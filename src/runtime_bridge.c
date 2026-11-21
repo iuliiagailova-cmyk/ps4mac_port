@@ -9,6 +9,8 @@
  */
 #ifdef __APPLE__
 #include <errno.h>
+#include <mach/mach.h>
+#include <time.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
@@ -32,7 +34,9 @@ static Ps4macSharedBlock *block;
 static pid_t service_pid;
 static pthread_mutex_t push_lock = PTHREAD_MUTEX_INITIALIZER; /* the ring has one producer */
 
+static _Atomic uint64_t messages_sent;
 static void send_message(const Ps4macMessage *m) {
+    atomic_fetch_add_explicit(&messages_sent, 1, memory_order_relaxed);
     pthread_mutex_lock(&push_lock);
     if (ps4mac_ring_push(&block->to_graphics, m, 2000000000ull))
         fputs("Bridge: the graphics service does not take messages\n", stderr);
@@ -197,6 +201,43 @@ static void *reply_thread(void *unused) {
     }
 }
 
+/* Diagnostic (SPARTAN_HANG_DUMP=1): when the guest sends the service nothing for 3 s after it
+ * started, the game's main thread state, once: R&C's main thread spins at a GPU result
+ * (rip 0x17fae80..0x17fae93 of the image: while (((float*)r15)[r13] == -1.0f) pause). */
+static mach_port_t game_thread_port;
+void runtime_bridge_note_game_thread(void) { game_thread_port = mach_thread_self(); }
+static void *hang_thread(void *unused) {
+    (void)unused;
+    uint64_t last = 0; int quiet = 0, dumped = 0;
+    for (;;) {
+        struct timespec ts = {1, 0}; nanosleep(&ts, NULL);
+        const uint64_t now = atomic_load_explicit(&messages_sent, memory_order_relaxed);
+        quiet = (now == last && now > 1000) ? quiet + 1 : 0;
+        last = now;
+        if (quiet < 3 || dumped || !game_thread_port) continue;
+        dumped = 1;
+        x86_thread_state64_t st; mach_msg_type_number_t n = x86_THREAD_STATE64_COUNT;
+        if (thread_get_state(game_thread_port, x86_THREAD_STATE64, (thread_state_t)&st, &n) != KERN_SUCCESS) {
+            fputs("Hang dump: thread_get_state failed\n", stderr);
+            continue;
+        }
+        fprintf(stderr, "Hang dump: game main thread rip=%#llx rsp=%#llx rbx=%#llx r12=%#llx r13=%#llx r14=%#llx r15=%#llx\n",
+                (unsigned long long)st.__rip, (unsigned long long)st.__rsp, (unsigned long long)st.__rbx,
+                (unsigned long long)st.__r12, (unsigned long long)st.__r13, (unsigned long long)st.__r14,
+                (unsigned long long)st.__r15);
+        if (st.__r15 > 0x10000 && st.__r13 < (1u << 26)) {
+            const float *f = (const float *)(uintptr_t)st.__r15;
+            fprintf(stderr, "Hang dump: wait address %#llx (r15 + 4*r13) holds %f; r15 base %#llx\n",
+                    (unsigned long long)(st.__r15 + 4 * st.__r13), (double)f[st.__r13],
+                    (unsigned long long)st.__r15);
+            const Ps4macMessage diag = {.kind = PS4MAC_DIAG_ADDRESS, .a = st.__r15 + 4 * st.__r13};
+            send_message(&diag);
+        }
+        fflush(stderr);
+    }
+    return NULL;
+}
+
 static void *watch_thread(void *unused) {
     (void)unused;
     int status = 0;
@@ -316,6 +357,14 @@ void runtime_bridge_start(void) {
 
     pthread_t thread;
     pthread_create(&thread, NULL, watch_thread, NULL);
+    {
+        const char *hang = getenv("SPARTAN_HANG_DUMP");
+        if (hang && *hang == '1') {
+            pthread_t hang_watcher;
+            pthread_create(&hang_watcher, NULL, hang_thread, NULL);
+            pthread_detach(hang_watcher);
+        }
+    }
     pthread_detach(thread);
     pthread_create(&thread, NULL, reply_thread, NULL);
     pthread_detach(thread);
@@ -333,6 +382,7 @@ void runtime_bridge_start(void) {
 void runtime_bridge_start(void) {}
 int runtime_bridge_remote_graphics(void) { return 0; }
 struct Ps4macInput *runtime_bridge_input(void) { return NULL; }
+void runtime_bridge_note_game_thread(void) {}
 int runtime_bridge_fault(uintptr_t address, int is_write) { (void)address; (void)is_write; return 0; }
 int runtime_bridge_gpu_init(const char *title, const char *serial, const char *user_dir, uint32_t sdk_version,
                             uint32_t psf_attributes, int32_t width, int32_t height) {

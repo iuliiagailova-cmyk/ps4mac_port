@@ -74,6 +74,7 @@ enum {
     PS4MAC_CHECKSUM = 100, /* guest -> graphics: a = address, b = size, c = guest's hash */
     PS4MAC_CHECKSUM_REPLY, /* graphics -> guest: a, b as asked, c = guest's hash, d = service's */
     PS4MAC_QUIT,
+    PS4MAC_DIAG_ADDRESS,   /* guest -> graphics (SPARTAN_HANG_DUMP): a = address; the service prints its state */
 };
 
 static inline uint64_t ps4mac_now_ns(void) {

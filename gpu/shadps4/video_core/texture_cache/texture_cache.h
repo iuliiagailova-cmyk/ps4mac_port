@@ -322,6 +322,8 @@ public:
 
     /// Runs the garbage collector.
     void RunGarbageCollector();
+    /// ps4mac_port diagnostic: what the cache knows about `address` (images, readbacks).
+    void DiagAddress(VAddr address);
 
     template <typename Func>
     void ForEachImageInRegion(VAddr cpu_addr, size_t size, Func&& func) {
@@ -457,7 +459,7 @@ private:
     };
     std::unordered_map<u64, LargeRefresh> large_refreshes;
     std::mutex large_refreshes_mutex;
-    std::atomic<bool> retire_queued{false}; ///< RnCPort: a retire runs when the GPU is past the copy
+    std::atomic<u64> retire_queued_tick{0}; ///< RnCPort: the copy tick a retire was last queued for
     void PrintRefreshDiagnostics();
     u64 gc_evictions = 0, gc_downloads = 0; ///< spartanport: pressure report
     std::chrono::steady_clock::time_point gc_report_time{};

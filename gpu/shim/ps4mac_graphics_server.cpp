@@ -317,6 +317,17 @@ extern "C" void ps4mac_gfx_server_start(void (*reply)(const Ps4macMessage*)) {
 extern "C" int ps4mac_gfx_server_handle(const Ps4macMessage* m) {
     auto* core = liverpool.get();
     switch (m->kind) {
+    case 101 + 2: { // PS4MAC_DIAG_ADDRESS (bridge/ps4mac_ring.h)
+        const VAddr address = m->a;
+        auto* rasterizer = &presenter->GetRasterizer();
+        core->SendCommand([rasterizer, address] {
+            rasterizer->GetTextureCache().DiagAddress(address);
+            std::printf("Diag   buffer cache: GPU-modified %d\n",
+                        int(rasterizer->GetBufferCache().IsRegionGpuModified(address, 4)));
+            std::fflush(stdout);
+        });
+        return 1;
+    }
     case PS4MAC_GFX_UI_ACTION:
         if (m->a == PS4MAC_UI_MOUSE_PAUSE) {
             Frontend::ToggleMousePause();
