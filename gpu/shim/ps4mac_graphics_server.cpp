@@ -88,6 +88,12 @@ void PrintPresentStats() {
     const double seconds = std::chrono::duration<double>(now - window).count();
     std::fprintf(stderr, "Service present: %.1f game frames/s, %.1f blank/s, %.1f repeats/s skipped\n",
                 presented_game / seconds, presented_blank / seconds, repeats_skipped / seconds);
+    std::fprintf(stderr, "Service memory: images %llu MiB, buffer copies %llu MiB, staging %llu MiB large + %llu MiB ring; direct uploads %llu MiB\n",
+                 (unsigned long long)(SpartanStats::image_bytes.load() >> 20),
+                 (unsigned long long)(SpartanStats::arena_resident_bytes.load() >> 20),
+                 (unsigned long long)(SpartanStats::staging_large_bytes.load() >> 20),
+                 (unsigned long long)(SpartanStats::staging_ring_bytes.load() >> 20),
+                 (unsigned long long)(SpartanStats::direct_upload_bytes.exchange(0) >> 20));
     presented_game = presented_blank = repeats_skipped = 0;
     window = now;
     Vulkan::WaitDiagnostics::Report(); // SPARTAN_PERF_DIAG=1: GPU waits by call site (the guest's copy is empty)

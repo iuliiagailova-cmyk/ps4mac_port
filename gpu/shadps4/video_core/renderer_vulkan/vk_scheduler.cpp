@@ -365,7 +365,7 @@ void Scheduler::TraceDirectRecording(void* caller) {
 void NoteRecordingThread(const char* where, bool (*busy)(void*), void* context) {
     static const bool on = [] {
         const char* env = std::getenv("SPARTAN_SCHED_THREADS");
-        return env && env[0] == '1';
+        return env && (env[0] == '1' || env[0] == '2');
     }();
     if (!on) {
         return;
@@ -375,6 +375,11 @@ void NoteRecordingThread(const char* where, bool (*busy)(void*), void* context) 
     static std::vector<void*> racing_sites;
     const pthread_t self = pthread_self();
     const bool racing = busy && busy(context);
+    thread_local bool known_thread = false;
+    if (!racing && known_thread) {
+        return; // the common case, cheap: a known thread, no race
+    }
+    known_thread = true;
     void* frames[24];
     const int depth = backtrace(frames, 24);
     std::scoped_lock lk{mutex};

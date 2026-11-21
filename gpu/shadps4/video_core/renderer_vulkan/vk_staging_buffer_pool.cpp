@@ -247,6 +247,13 @@ void StagingBufferPool::TrimLarge(std::vector<LargeBuffer>& cache) {
 }
 
 void StagingBufferPool::PublishStats() const {
+    {
+        u64 large = 0, ring = 0;
+        for (const auto& cache : large_caches) for (const auto& e : cache) large += e.buffer->SizeBytes();
+        for (const auto& r : rings) ring += r.blocks.size() * BLOCK_SIZE;
+        SpartanStats::staging_large_bytes.store(large, std::memory_order_relaxed);
+        SpartanStats::staging_ring_bytes.store(ring, std::memory_order_relaxed);
+    }
     using namespace Core::Devtools::Widget;
     if (!GpuMemoryViewer::IsEnabled()) {
         return;

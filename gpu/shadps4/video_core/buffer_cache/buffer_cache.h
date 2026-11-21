@@ -149,6 +149,12 @@ private:
     static void RunGuestCopy(const SpartanCopy::Item& item);
     void SmallGuestCopy(const SpartanCopy::Item& item);
 
+    /// ps4mac_port: the host address of mapped arena memory backing `address`, or nullptr.
+    u8* ArenaHost(VAddr address);
+    /// ps4mac_port: copies the upload ranges straight into mapped arena memory (unified memory:
+    /// no staging buffer, no GPU copy). False when a range is not mapped.
+    bool UploadDirect(std::span<vk::BufferCopy> copies, size_t total_size_bytes);
+    static void RunArenaCopy(const SpartanCopy::Item& item);
     const Buffer* UploadCopies(const Buffer* arena, std::span<vk::BufferCopy> copies,
                                size_t total_size_bytes);
 
@@ -181,6 +187,7 @@ private:
     std::array<const Buffer*, MAX_ARENA_PAGES> address_space{};
     u64 arena_page_bits{MAX_ARENA_PAGE_BITS};
     u64 arena_page_size{u64{1} << MAX_ARENA_PAGE_BITS};
+    bool arena_coherent = false; ///< ps4mac_port: arena memory is host-visible and coherent
     u64 num_arena_pages{u64{1} << (ADDRESS_SPACE_BITS - MAX_ARENA_PAGE_BITS)};
     std::deque<Buffer> arenas;
     std::vector<ArenaBinds> pending_binds;

@@ -777,6 +777,15 @@ public:
             func(current_cmdbuf);
             return;
         }
+        // Diagnostic (SPARTAN_SCHED_THREADS=2): every recorded command is checked for a race with
+        // the draw recording thread, not only chunk swaps.
+        static const bool check_records = [] {
+            const char* env = std::getenv("SPARTAN_SCHED_THREADS");
+            return env && env[0] == '2';
+        }();
+        if (check_records) {
+            NoteRecordingThread("Record", race_busy, race_context);
+        }
         if (SpartanToggle::Disabled(SpartanToggle::ThreadedRecording)) {
             SyncRecording();
             direct_mode = true;

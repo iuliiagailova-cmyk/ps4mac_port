@@ -93,6 +93,11 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
         FindMemoryType(instance.GetMemoryProperties(), vk::MemoryPropertyFlagBits::eDeviceLocal,
                        reqs.memoryTypeBits)
             .value();
+    {
+        const auto flags = instance.GetMemoryProperties().memoryTypes[arena_memory_type_index].propertyFlags;
+        arena_coherent = (flags & vk::MemoryPropertyFlagBits::eHostVisible) &&
+                         (flags & vk::MemoryPropertyFlagBits::eHostCoherent);
+    }
 
     // spartanport: shaders read the page table only with direct memory access
     // (SPARTAN_DIRECT_MEMORY_ACCESS, off by default); without it a token table saves 512 MiB of
@@ -377,6 +382,8 @@ void PrintBufferStats() {
 
 std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 size,
                                                         bool is_written, bool is_texel_buffer) {
+    // ps4mac_port: waiting here only where the buffer itself needs the readback froze R&C in a
+    // fight (21.11.2026): this wait also retires completed readbacks the game spins on.
     texture_cache.ResolveReadbacks(device_addr, size, true, ReadbackSource::BufferObtain);
     const bool stats = BufferStatsEnabled();
     if (stats) {
@@ -639,6 +646,107 @@ bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 
     return false;
 }
 
+u8* BufferCache::ArenaHost(VAddr address) {
+    u8* host = nullptr;
+    const u64 block = address >> block_shift;
+    resident_ranges.ForEachInRange(block, block + 1, [&](const Backing& backing) {
+        const auto it = mapped_backing.find(static_cast<VkDeviceMemory>(backing.memory));
+        if (it != mapped_backing.end()) {
+            host = it->second + backing.offset + ((block - backing.start) << block_shift) +
+                   (address & ((u64{1} << block_shift) - 1));
+        }
+    });
+    return host;
+}
+
+void BufferCache::RunArenaCopy(const SpartanCopy::Item& item) {
+    auto* cache = static_cast<BufferCache*>(item.context);
+    cache->memory->CopySparseMemory(item.source, reinterpret_cast<u8*>(item.destination), item.size);
+}
+
+// ps4mac_port: on Apple's unified memory the arena is mapped for the CPU, so guest data goes
+// straight into it. The staging path allocated a buffer as large as the upload (R&C binds huge
+// buffers: 128-896 MiB at once, each allocation a stutter of 150-670 ms on 8 GB Macs) and copied
+// it again on the GPU. The copies land before the next submission (host copies, as before), and
+// work already submitted reads the new data the way the PS4's GPU reads guest memory directly.
+// SPARTAN_DIRECT_UPLOAD=0 uses staging as before.
+bool BufferCache::UploadDirect(std::span<vk::BufferCopy> copies, size_t total_size_bytes) {
+    static const bool enabled = [] {
+        const char* env = std::getenv("SPARTAN_DIRECT_UPLOAD");
+        return !(env && env[0] == '0');
+    }();
+    // Only uploads larger than a staging ring block: smaller ones reuse the ring's buffers, which
+    // measured faster than writing the arena (R&C fight: every upload direct was 2 FPS slower).
+    static const u64 min_bytes = [] {
+        const char* env = std::getenv("SPARTAN_DIRECT_UPLOAD_MIN_MB");
+        return (env ? std::strtoull(env, nullptr, 10) : 16) * 1_MB;
+    }();
+    if (!enabled || !arena_coherent || mapped_backing.empty() || total_size_bytes < min_bytes ||
+        SpartanToggle::Disabled(SpartanToggle::DeferredUploads)) {
+        return false;
+    }
+    struct Piece {
+        VAddr source;
+        u8* destination;
+        u64 size;
+    };
+    boost::container::small_vector<Piece, 16> pieces;
+    for (const auto& copy : copies) {
+        const VAddr end = copy.dstOffset + copy.size;
+        for (VAddr a = copy.dstOffset; a < end;) {
+            const VAddr block_end = std::min<VAddr>(end, ((a >> block_shift) + 1) << block_shift);
+            u8* host = ArenaHost(a);
+            if (!host) {
+                return false;
+            }
+            pieces.push_back({a, host, block_end - a});
+            a = block_end;
+        }
+    }
+    SpartanStats::buffer_upload_bytes.fetch_add(total_size_bytes, std::memory_order_relaxed);
+    SpartanStats::direct_upload_bytes.fetch_add(total_size_bytes, std::memory_order_relaxed);
+    if (total_size_bytes < 1_MB) {
+        for (const Piece& piece : pieces) {
+            SmallGuestCopy({
+                .run = &RunArenaCopy,
+                .context = this,
+                .source = piece.source,
+                .destination = reinterpret_cast<u64>(piece.destination),
+                .size = piece.size,
+            });
+        }
+        return true;
+    }
+    using Group = boost::container::small_vector<Piece, 8>;
+    auto group = std::make_shared<Group>();
+    u64 group_bytes = 0;
+    const auto launch = [&] {
+        SpartanCopy::Async([group, memory = memory] {
+            for (const Piece& piece : *group) {
+                memory->CopySparseMemory(piece.source, piece.destination, piece.size);
+            }
+        });
+    };
+    for (const Piece& piece : pieces) {
+        // Pieces over 1 MiB are split so that the copy threads share a large upload.
+        for (u64 done = 0; done < piece.size;) {
+            const u64 n = std::min<u64>(piece.size - done, 1_MB);
+            group->push_back({piece.source + done, piece.destination + done, n});
+            group_bytes += n;
+            done += n;
+            if (group_bytes >= 1_MB) {
+                launch();
+                group = std::make_shared<Group>();
+                group_bytes = 0;
+            }
+        }
+    }
+    if (!group->empty()) {
+        launch();
+    }
+    return true;
+}
+
 const Buffer* BufferCache::UploadCopies(const Buffer* arena, std::span<vk::BufferCopy> copies,
                                         size_t total_size_bytes) {
     if (copies.empty()) {
@@ -647,6 +755,9 @@ const Buffer* BufferCache::UploadCopies(const Buffer* arena, std::span<vk::Buffe
     // Resolve before launching host copies: a copy-thread fault could deadlock submission.
     for (const auto& copy : copies) {
         texture_cache.ResolveReadbacks(copy.dstOffset, copy.size, true, ReadbackSource::BufferUpload);
+    }
+    if (UploadDirect(copies, total_size_bytes)) {
+        return nullptr;
     }
     SpartanStats::buffer_upload_bytes.fetch_add(total_size_bytes, std::memory_order_relaxed);
     const auto staging = staging_pool.Request(total_size_bytes, MemoryType::HostUncached);

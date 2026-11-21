@@ -95,6 +95,10 @@ inline std::atomic<std::uint64_t> image_upload_bytes{0};
 inline std::atomic<std::uint64_t> buffer_upload_bytes{0};
 /// Device memory backing the buffer arenas (guest memory copies), and registered image bytes.
 inline std::atomic<std::uint64_t> arena_resident_bytes{0};
+/// ps4mac_port: staging buffers alive, bytes (memory report).
+inline std::atomic<std::uint64_t> staging_large_bytes{0}, staging_ring_bytes{0};
+/// ps4mac_port: buffer uploads copied straight into mapped arena memory (BufferCache::UploadDirect).
+inline std::atomic<std::uint64_t> direct_upload_bytes{0};
 inline std::atomic<std::uint64_t> image_bytes{0};
 /// Buffer downloads from mapped arena memory, and those that submitted and waited (Finish).
 inline std::atomic<std::uint64_t> mapped_downloads{0}, finish_downloads{0};
