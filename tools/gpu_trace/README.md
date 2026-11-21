@@ -19,3 +19,17 @@ render stage), so `SPARTAN_GPU_PROFILE=1` gives no usable numbers there. Instead
 
 Limits: the "GPU Execution" rows of the trace carry no label and their encoder ids do not match
 the encoders, so only part of the time gets a name.
+
+## Metal frame capture (counters, limiters, shader cost by line)
+
+KosmicKrisp's own capture (`MESA_KK_GPU_CAPTURE`) records the whole session; the ps4mac patch
+adds a triggered one: `MTL_CAPTURE_ENABLED=1 KK_CAPTURE_TRIGGER=<file>
+KK_CAPTURE_DIRECTORY=<dir> KK_CAPTURE_SUBMITS=<n>` on the graphics service; creating `<file>`
+captures the next n queue submissions (R&C: ~19 a frame) to `<dir>/ps4mac_service.gputrace`.
+`capture_rnc_level.sh [submissions]` (from RnC/autotest) does it in the R&C level.
+
+Size: Metal stores every resource the work references, guest memory included — 20 submissions
+are ~7.7 GB, 60 are ~18 GB. Open the `.gputrace` in Xcode (File > Open) on this Mac; it replays
+the frame on the GPU. Useful views: Summary > Performance (time per encoder), the Counters view
+(memory bandwidth, limiters such as ALU / texture / memory per encoder), and a shader's Profile
+(cost per line).
