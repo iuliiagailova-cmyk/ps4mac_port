@@ -36,6 +36,8 @@ class VkCtxScope;
 
 namespace Vulkan {
 
+void NoteRecordingThread(const char* where, bool (*busy)(void*), void* context);
+
 class Instance;
 
 struct RenderAttachment {
@@ -782,6 +784,7 @@ public:
             return;
         }
         if (!record_chunk->Push(std::forward<Func>(func))) {
+            NoteRecordingThread("Record", race_busy, race_context);
             full_chunks.push_back(std::move(record_chunk));
             record_chunk = AcquireChunk();
             const bool pushed = record_chunk->Push(std::forward<Func>(func));
@@ -807,6 +810,7 @@ public:
             bytes = 0;
         }
         if (RecordChunk::Capacity - record_chunk->Size() < bytes + 1024) {
+            NoteRecordingThread("ReserveRecordData", race_busy, race_context);
             full_chunks.push_back(std::move(record_chunk));
             record_chunk = AcquireChunk();
         }
@@ -832,6 +836,15 @@ public:
     /// Hands recorded commands to the recording thread. Called at points where no caller holds
     /// the raw command buffer (end of draws and dispatches); small batches are kept.
     void KickRecording(bool force = false);
+
+    /// Diagnostic (SPARTAN_SCHED_THREADS=1): `busy` tells whether recording from the calling
+    /// thread races the draw recording thread (it is not stage B and the draw pipe holds work).
+    void SetRecordingRaceCheck(bool (*busy)(void*), void* context) {
+        race_busy = busy;
+        race_context = context;
+    }
+    bool (*race_busy)(void*) = nullptr;
+    void* race_context = nullptr;
 
     /// Waits until every recorded command is in the command buffer.
     void SyncRecording();

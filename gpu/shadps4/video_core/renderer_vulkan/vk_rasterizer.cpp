@@ -72,6 +72,12 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
     if (DrawPipeWanted()) {
         constant_ring = std::make_unique<ConstantRing>(instance, scheduler);
         draw_pipe = std::make_unique<DrawPipe>(&RunDrawPacket, this);
+        scheduler.SetRecordingRaceCheck(
+            [](void* context) {
+                auto* pipe = static_cast<DrawPipe*>(context);
+                return !DrawPipe::OnStageB() && !pipe->Idle();
+            },
+            draw_pipe.get());
     }
     // spartanport: this thread joins the texture binding helper before it changes image state.
     runtime.SetImageAccessHook(&JoinBindHelper, this);
@@ -3438,6 +3444,15 @@ void Rasterizer::RegisterMemory(VAddr addr, u64 size) {
 }
 
 void Rasterizer::UnmapMemory(VAddr addr, u64 size) {
+    // ps4mac_port: an unmap arrives on a guest thread (one process) or the service's ring thread.
+    // Freeing images there resolves their pending readbacks and defers their deletion through the
+    // scheduler while the draw recording thread may be recording (the service crashed in
+    // Scheduler::ReserveRecordData on a null chunk when a game unmapped at a scene change).
+    // DrainDrawPipe only waits on stage A, so the unmap runs there, after the draw pipe drains.
+    if (!IsGpuSideThread() && liverpool) {
+        liverpool->SendCommand<true>([this, addr, size] { UnmapMemory(addr, size); });
+        return;
+    }
     DrainDrawPipe();
     buffer_cache.InvalidateMemory(addr, size);
     texture_cache.UnmapMemory(addr, size);

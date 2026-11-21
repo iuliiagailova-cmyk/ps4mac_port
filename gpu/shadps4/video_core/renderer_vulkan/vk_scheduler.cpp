@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <cxxabi.h>
+#include <execinfo.h>
+#include <pthread.h>
+#include <mutex>
 #include <dlfcn.h>
 #include <algorithm>
 #include <array>
@@ -356,7 +359,46 @@ void Scheduler::TraceDirectRecording(void* caller) {
     callers.clear();
 }
 
+// ps4mac_port diagnostic (SPARTAN_SCHED_THREADS=1): prints, with a backtrace, each thread that
+// first swaps the recording chunks, and each call site that swaps them while the draw recording
+// thread (stage B) may be recording: only one of the two may at a time.
+void NoteRecordingThread(const char* where, bool (*busy)(void*), void* context) {
+    static const bool on = [] {
+        const char* env = std::getenv("SPARTAN_SCHED_THREADS");
+        return env && env[0] == '1';
+    }();
+    if (!on) {
+        return;
+    }
+    static std::mutex mutex;
+    static std::vector<pthread_t> seen;
+    static std::vector<void*> racing_sites;
+    const pthread_t self = pthread_self();
+    const bool racing = busy && busy(context);
+    void* frames[24];
+    const int depth = backtrace(frames, 24);
+    std::scoped_lock lk{mutex};
+    bool known = false;
+    for (const pthread_t t : seen) {
+        known |= pthread_equal(t, self) != 0;
+    }
+    char name[64] = {};
+    pthread_getname_np(self, name, sizeof(name));
+    if (!known) {
+        seen.push_back(self);
+        std::fprintf(stderr, "Scheduler thread #%zu '%s' first in %s\n", seen.size(), name, where);
+        backtrace_symbols_fd(frames, depth, 2);
+    }
+    if (racing && depth > 2 &&
+        std::find(racing_sites.begin(), racing_sites.end(), frames[2]) == racing_sites.end()) {
+        racing_sites.push_back(frames[2]);
+        std::fprintf(stderr, "Scheduler race: '%s' in %s while the draw pipe is busy\n", name, where);
+        backtrace_symbols_fd(frames, depth, 2);
+    }
+}
+
 std::unique_ptr<RecordChunk> Scheduler::AcquireChunk() {
+    NoteRecordingThread("AcquireChunk", race_busy, race_context);
     std::scoped_lock lk{recorder_mutex};
     if (free_chunks.empty()) {
         return std::make_unique<RecordChunk>();
@@ -416,6 +458,7 @@ void Scheduler::KickRecording(bool force) {
     if (!recording_threaded) {
         return;
     }
+    NoteRecordingThread("KickRecording", race_busy, race_context);
     // Callers kick where nobody holds the raw command buffer: deferral resumes.
     direct_mode = false;
     // Batches of tens of KiB keep the queue handoff cheap relative to the work it carries.
