@@ -446,12 +446,18 @@ struct PhaseTimer {
     ~PhaseTimer() { Stop(); }
 };
 struct CompileTimer {
+    const char* kind = "";
+    u64 hash = 0;
     std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
     ~CompileTimer() {
-        g_spartanport_compile_ns += u64(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                   std::chrono::steady_clock::now() - start)
-                                   .count());
+        const u64 ns = u64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                               std::chrono::steady_clock::now() - start).count());
+        g_spartanport_compile_ns += ns;
         ++g_spartanport_compiles;
+        // ps4mac_port: a compile on the GPU thread long enough to show (the game's frame waits).
+        if (ns >= 50'000'000) {
+            std::printf("Sync compile: %s %#llx %.0f ms\n", kind, (unsigned long long)hash, ns / 1e6);
+        }
     }
 };
 } // namespace
@@ -721,7 +727,18 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
         }
         return nullptr;
     }
-    if (AsyncCompilation() && !sel.regs->stage_enable.hs_en && !EmulatorSettings.IsShaderCollect()) {
+    // ps4mac_port (SPARTAN_ASYNC_TESS, on by default): tessellation pipelines are built on the
+    // workers too. What only tessellation reads from guest memory (the tessellation constant
+    // buffer) is read here, at selection, and while compiling the hull and domain modules, which
+    // stays synchronous (GetProgram); the pipeline build reads the stages' sharps from the
+    // snapshot as for any pipeline. In R&C each of them cost 0.2-0.6 s on the GPU thread the
+    // first time (Metal compile): the pauses when a new area or effect appears.
+    static const bool async_tess = [] {
+        const char* env = std::getenv("SPARTAN_ASYNC_TESS");
+        return !(env && env[0] == '0');
+    }();
+    if (AsyncCompilation() && (async_tess || !sel.regs->stage_enable.hs_en) &&
+        !EmulatorSettings.IsShaderCollect()) {
         const auto found = graphics_pipelines.find(sel.graphics_key);
         if (found != graphics_pipelines.end()) {
             return found->second.get();
@@ -763,7 +780,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
     if (is_new) {
         const auto pipeline_hash = std::hash<GraphicsPipelineKey>{}(sel.graphics_key);
         LOG_INFO(Render_Vulkan, "Compiling graphics pipeline {:#x}", pipeline_hash);
-        CompileTimer timer;
+        CompileTimer timer{"graphics pipeline", pipeline_hash};
 
         GraphicsPipeline::SerializationSupport sdata{};
         it.value() = std::make_unique<GraphicsPipeline>(
@@ -797,7 +814,7 @@ const ComputePipeline* PipelineCache::GetComputePipeline() {
     if (is_new) {
         const auto pipeline_hash = std::hash<ComputePipelineKey>{}(compute_key);
         LOG_INFO(Render_Vulkan, "Compiling compute pipeline {:#x}", pipeline_hash);
-        CompileTimer timer;
+        CompileTimer timer{"compute pipeline", pipeline_hash};
 
         ComputePipeline::SerializationSupport sdata{};
         it.value() = std::make_unique<ComputePipeline>(instance, scheduler, desc_heap, profile,
@@ -1141,7 +1158,8 @@ vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::Runtim
     LOG_INFO(Render_Vulkan, "Compiling {} shader {:#x} {}", info.hw_stage, info.pgm_hash,
              perm_idx != 0 ? "(permutation)" : "");
     DumpShader(code, info.pgm_hash, info.hw_stage, perm_idx, "bin");
-    CompileTimer timer;
+    CompileTimer timer{info.hw_stage == Shader::HwStage::Compute ? "compute shader" : "shader",
+                       info.pgm_hash};
 
     const auto ir_program = Shader::TranslateProgram(code, pools, info, runtime_info, profile);
     auto spv = Shader::Backend::SPIRV::EmitSPIRV(profile, runtime_info, ir_program, binding);
