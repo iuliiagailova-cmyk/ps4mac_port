@@ -1814,7 +1814,8 @@ void TextureCache::GarbageCollectImages() {
             vmaCalculateStatistics(instance.GetAllocator(), &vma_stats);
             std::printf("Texture cache: memory pressure, %llu of %llu MiB (critical %llu): "
                         "%llu images evicted, %llu written back since the last report; "
-                        "images %llu MiB, buffer arenas %llu MiB, VMA %llu MiB in %u allocations\n",
+                        "images %llu MiB, buffer arenas %llu MiB, VMA %llu MiB in %u allocations "
+                        "(%llu MiB used, %u blocks)\n",
                         (unsigned long long)(total_used_memory >> 20),
                         (unsigned long long)(pressure_gc_memory >> 20),
                         (unsigned long long)(critical_gc_memory >> 20),
@@ -1822,7 +1823,22 @@ void TextureCache::GarbageCollectImages() {
                         (unsigned long long)(SpartanStats::image_bytes.load() >> 20),
                         (unsigned long long)(SpartanStats::arena_resident_bytes.load() >> 20),
                         (unsigned long long)(vma_stats.total.statistics.blockBytes >> 20),
-                        vma_stats.total.statistics.allocationCount);
+                        vma_stats.total.statistics.allocationCount,
+                        (unsigned long long)(vma_stats.total.statistics.allocationBytes >> 20),
+                        vma_stats.total.statistics.blockCount);
+            // spartanport: SPARTAN_VMA_DUMP=<file> writes VMA's detailed map (every allocation)
+            // on each report, overwriting, to break service GPU memory down offline.
+            if (const char* dump = std::getenv("SPARTAN_VMA_DUMP"); dump && *dump) {
+                char* json = nullptr;
+                vmaBuildStatsString(instance.GetAllocator(), &json, VK_TRUE);
+                if (json) {
+                    if (FILE* f = std::fopen(dump, "w")) {
+                        std::fputs(json, f);
+                        std::fclose(f);
+                    }
+                    vmaFreeStatsString(instance.GetAllocator(), json);
+                }
+            }
             gc_report_time = now;
             gc_evictions = gc_downloads = 0;
             PrintRefreshDiagnostics();

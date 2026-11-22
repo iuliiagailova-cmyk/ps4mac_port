@@ -128,6 +128,14 @@ void UniqueImage::Create(const vk::ImageCreateInfo& image_ci) {
                vk::to_string(vk::Result{result}));
     image = vk::Image{unsafe_image};
     size_bytes = alloc_info.size;
+    // spartanport: name the very large images (service memory breakdown, SPARTAN_FRAME_STATS).
+    static const bool frame_stats = std::getenv("SPARTAN_FRAME_STATS") != nullptr;
+    if (frame_stats && size_bytes >= (64ull << 20)) {
+        std::printf("Large image: %llu MiB, %ux%ux%u, %u mips, %u layers, format %d, usage 0x%x\n",
+                    (unsigned long long)(size_bytes >> 20), image_ci.extent.width,
+                    image_ci.extent.height, image_ci.extent.depth, image_ci.mipLevels,
+                    image_ci.arrayLayers, (int)image_ci.format, (unsigned)VkImageUsageFlags(image_ci.usage));
+    }
 }
 
 Image::Image(const Vulkan::Instance& instance, Vulkan::Runtime& runtime_,

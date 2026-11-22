@@ -813,9 +813,17 @@ void Instance::CreateAllocator() {
         .vkGetDeviceProcAddr = VULKAN_HPP_DEFAULT_DISPATCHER.vkGetDeviceProcAddr,
     };
 
+    // spartanport: SPARTAN_VMA_BLOCK_MB=N sets VMA's block size (default 256 MiB). VMA returns a
+    // block only once every allocation in it is gone, so on Novalis ~0.5 GB of 1.8 GB sat in
+    // holes between textures that outlived their neighbours; smaller blocks empty more often.
+    static const VkDeviceSize block_size = [] {
+        const char* env = std::getenv("SPARTAN_VMA_BLOCK_MB");
+        return env ? static_cast<VkDeviceSize>(std::strtoull(env, nullptr, 10)) << 20 : 0;
+    }();
     const VmaAllocatorCreateInfo allocator_info = {
         .flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
         .physicalDevice = physical_device,
+        .preferredLargeHeapBlockSize = block_size,
         .device = *device,
         .pVulkanFunctions = &functions,
         .instance = *instance,

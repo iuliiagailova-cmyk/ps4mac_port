@@ -263,6 +263,7 @@ def main():
             env.setdefault('SPARTAN_STAGING_LARGE_IDLE_MS', '3000')
             env.setdefault('SPARTAN_STAGING_LARGE_KEEP_MB', '256')
             env.setdefault('SPARTAN_STAGING_RING_IDLE_MS', '3000')
+            env.setdefault('SPARTAN_VMA_BLOCK_MB', '32')
             print('Memory: 8 GB Mac, upload buffers kept small (SPARTAN_STAGING_*)')
     if port_profile:
         ini = graphics_options.read_ini(env['SPARTAN_CONFIG'])
