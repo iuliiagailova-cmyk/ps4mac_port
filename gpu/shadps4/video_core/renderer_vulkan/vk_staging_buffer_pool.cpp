@@ -48,6 +48,9 @@ StagingBufferPool::StagingBufferPool(const Instance& instance_, Scheduler& sched
     if (const char* idle = std::getenv("SPARTAN_STAGING_LARGE_IDLE_MS")) {
         large_idle_time = std::chrono::milliseconds(std::strtoull(idle, nullptr, 10));
     }
+    if (const char* idle = std::getenv("SPARTAN_STAGING_RING_IDLE_MS")) {
+        ring_idle_time = std::chrono::milliseconds(std::strtoull(idle, nullptr, 10));
+    }
     if (const char* keep = std::getenv("SPARTAN_STAGING_LARGE_KEEP_MB")) {
         large_keep_bytes = std::strtoull(keep, nullptr, 10) * 1_MB;
     }
@@ -80,7 +83,8 @@ StagingBufferRef StagingBufferPool::RequestFromRing(Ring& ring, u64 size, u64 al
     Block* best{};
     u64 best_offset{};
     for (size_t i = 0; i < ring.blocks.size(); ++i) {
-        const size_t index = (ring.current + i) % ring.blocks.size();
+        const size_t index =
+            ring_idle_time.count() ? i : (ring.current + i) % ring.blocks.size();
         Block* block = &ring.blocks[index];
         if (const auto offset = block->buffer->Reserve(size, alignment, false)) {
             ring.current = index;
@@ -102,6 +106,9 @@ StagingBufferRef StagingBufferPool::RequestFromRing(Ring& ring, u64 size, u64 al
 
     auto& buffer = *best->buffer;
     best->last_used_frame = frame;
+    if (ring_idle_time.count()) {
+        best->last_used_time = std::chrono::steady_clock::now();
+    }
 
     StagingBufferRef ref{
         .buffer = &buffer,
@@ -192,9 +199,13 @@ void StagingBufferPool::TickFrame() {
 
 void StagingBufferPool::TrimRing(Ring& ring) {
     auto& blocks = ring.blocks;
+    const auto now = std::chrono::steady_clock::now();
     for (size_t i = blocks.size(); i-- > 0;) {
         const Block& block = blocks[i];
-        if (blocks.size() <= keep_blocks || frame - block.last_used_frame < RING_IDLE_FRAMES ||
+        const bool idle = frame - block.last_used_frame >= RING_IDLE_FRAMES ||
+                          (ring_idle_time.count() && frame != block.last_used_frame &&
+                           now - block.last_used_time >= ring_idle_time);
+        if (blocks.size() <= keep_blocks || !idle ||
             !scheduler.IsFree(block.buffer->LastTick())) {
             continue;
         }

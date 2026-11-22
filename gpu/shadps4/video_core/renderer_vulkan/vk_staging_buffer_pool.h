@@ -55,6 +55,7 @@ private:
     struct Block {
         std::unique_ptr<VideoCore::StreamBuffer> buffer;
         u64 last_used_frame;
+        std::chrono::steady_clock::time_point last_used_time{};
     };
 
     struct Ring {
@@ -93,6 +94,10 @@ private:
     /// SPARTAN_STAGING_LARGE_KEEP_MB).
     std::chrono::milliseconds large_idle_time{30000};
     u64 large_keep_bytes = ~0ULL;
+    /// ps4mac_port: SPARTAN_STAGING_RING_IDLE_MS. Ring blocks beyond keep_blocks idle this long
+    /// are freed, and requests take the first block with room (not the next one round): the
+    /// blocks a burst added then fall idle. 0: freed after RING_IDLE_FRAMES only, round robin.
+    std::chrono::milliseconds ring_idle_time{0};
 };
 
 } // namespace Vulkan
