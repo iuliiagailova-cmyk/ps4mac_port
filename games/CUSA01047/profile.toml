@@ -29,6 +29,11 @@ SPARTAN_FLUSH_DRAWS = "30"
 # overexposed frames with orange halos.
 SPARTAN_HOST_BUFFERS = "1"
 SPARTAN_HOST_BUFFERS_SKIP = "0x8100000000"
+# Texture collector budget 3.5 GB instead of the Metal working-set budget (~4.7 GB on an 8 GB M1;
+# the driver's usage includes the imported guest memory). Novalis walk (2 runs each): service VMA
+# 1589 / 1572 vs 1634 / 1772 MiB, swap at the end 2.33 / 2.27 vs 2.36 / 2.45 GB, FPS and >150 ms
+# stalls the same or better (21.8 / 24.6 vs 21.8 / 24.4; 17 / 10 vs 17 / 15).
+SPARTAN_GC_BUDGET_MB = "3500"
 # Buffer hazards between draws inside a render pass follow the game's own sync (cache flush events,
 # AcquireMem) instead of breaking the pass: ~25 fewer render passes a frame on the tiled M1 GPU
 # (level 10.7 -> 13.7 FPS, fight 9.4 -> 11.6; service mode 10.8 -> 13.4, 10.3 -> 12.7).
