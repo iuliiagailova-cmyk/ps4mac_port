@@ -54,7 +54,8 @@ struct UniqueBuffer {
         : device{other.device}, buffer{std::exchange(other.buffer, VK_NULL_HANDLE)},
           bda_addr{std::exchange(other.bda_addr, 0)},
           allocator{std::exchange(other.allocator, VK_NULL_HANDLE)},
-          allocation{std::exchange(other.allocation, VK_NULL_HANDLE)} {}
+          allocation{std::exchange(other.allocation, VK_NULL_HANDLE)},
+          imported{std::exchange(other.imported, vk::DeviceMemory{})} {}
 
     UniqueBuffer& operator=(UniqueBuffer&& other) noexcept {
         if (this != &other) {
@@ -64,12 +65,15 @@ struct UniqueBuffer {
             bda_addr = std::exchange(other.bda_addr, 0);
             allocator = std::exchange(other.allocator, VK_NULL_HANDLE);
             allocation = std::exchange(other.allocation, VK_NULL_HANDLE);
+            imported = std::exchange(other.imported, vk::DeviceMemory{});
         }
         return *this;
     }
 
     void Create(vk::BufferCreateInfo& buffer_ci, MemoryType mem_type,
                 VmaAllocationInfo* out_alloc_info);
+    /// ps4mac_port: a buffer over host memory the caller owns (VK_EXT_external_memory_host).
+    void CreateImported(vk::BufferCreateInfo& buffer_ci, void* host, const Vulkan::Instance& instance);
 
     void Destroy();
 
@@ -78,11 +82,15 @@ struct UniqueBuffer {
     vk::DeviceAddress bda_addr{};
     VmaAllocator allocator;
     VmaAllocation allocation{};
+    vk::DeviceMemory imported{};
 };
 
 struct Buffer {
     explicit Buffer(const Vulkan::Instance& instance, VAddr cpu_addr_, u64 size_bytes_,
                     MemoryType mem_type, std::string_view debug_name = "");
+    /// ps4mac_port: a buffer whose memory is the host memory at `host` (guest memory mapped in
+    /// this process): the GPU reads and writes it in place.
+    explicit Buffer(const Vulkan::Instance& instance, VAddr cpu_addr_, u64 size_bytes_, void* host);
 
     Buffer& operator=(const Buffer&) = delete;
     Buffer(const Buffer&) = delete;

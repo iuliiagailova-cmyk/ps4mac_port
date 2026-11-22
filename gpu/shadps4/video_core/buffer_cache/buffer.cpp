@@ -107,6 +107,10 @@ void UniqueBuffer::Destroy() {
     } else if (buffer) {
         device.destroyBuffer(buffer);
     }
+    if (imported) {
+        device.freeMemory(imported);
+        imported = vk::DeviceMemory{};
+    }
     buffer = VK_NULL_HANDLE;
     allocation = VK_NULL_HANDLE;
     bda_addr = 0;
@@ -149,6 +153,61 @@ void UniqueBuffer::Create(vk::BufferCreateInfo& buffer_ci, MemoryType mem_type,
         ASSERT_MSG(bda_result != 0, "Failed to get buffer device address");
         bda_addr = bda_result;
     }
+}
+
+void UniqueBuffer::CreateImported(vk::BufferCreateInfo& buffer_ci, void* host,
+                                  const Vulkan::Instance& instance) {
+    constexpr auto handle_type = vk::ExternalMemoryHandleTypeFlagBits::eHostAllocationEXT;
+    const vk::ExternalMemoryBufferCreateInfo external_ci{.handleTypes = handle_type};
+    buffer_ci.pNext = &external_ci;
+    buffer = Vulkan::Check(device.createBuffer(buffer_ci));
+    buffer_ci.pNext = nullptr;
+    const auto host_props = Vulkan::Check(device.getMemoryHostPointerPropertiesEXT(handle_type, host));
+    const auto requirements = device.getBufferMemoryRequirements(buffer);
+    const u32 type_bits = host_props.memoryTypeBits & requirements.memoryTypeBits;
+    const auto& memory_props = instance.GetMemoryProperties();
+    u32 type_index = ~0u;
+    for (u32 i = 0; i < memory_props.memoryTypeCount; ++i) {
+        if (!(type_bits & (1u << i))) {
+            continue;
+        }
+        const auto flags = memory_props.memoryTypes[i].propertyFlags;
+        if (type_index == ~0u || (flags & vk::MemoryPropertyFlagBits::eHostCoherent)) {
+            type_index = i;
+        }
+    }
+    ASSERT_MSG(type_index != ~0u, "No memory type for imported host memory");
+    const vk::MemoryAllocateFlagsInfo flags_info{
+        .flags = vk::MemoryAllocateFlagBits::eDeviceAddress,
+    };
+    const vk::ImportMemoryHostPointerInfoEXT import_info{
+        .pNext = &flags_info,
+        .handleType = handle_type,
+        .pHostPointer = host,
+    };
+    const vk::MemoryAllocateInfo alloc_info{
+        .pNext = &import_info,
+        .allocationSize = buffer_ci.size,
+        .memoryTypeIndex = type_index,
+    };
+    imported = Vulkan::Check(device.allocateMemory(alloc_info));
+    device.bindBufferMemory(buffer, imported, 0);
+    bda_addr = device.getBufferAddress(vk::BufferDeviceAddressInfo{.buffer = buffer});
+}
+
+Buffer::Buffer(const Vulkan::Instance& instance, VAddr cpu_addr_, u64 size_bytes_, void* host)
+    : cpu_addr{cpu_addr_}, size_bytes{size_bytes_}, mem_type{MemoryType::HostUncached},
+      buffer{instance.GetDevice(), instance.GetAllocator()} {
+    vk::BufferCreateInfo buffer_ci = {
+        .size = size_bytes,
+        .usage = AllFlags,
+        .sharingMode = vk::SharingMode::eExclusive,
+    };
+    buffer.CreateImported(buffer_ci, host, instance);
+    Vulkan::SetObjectName(instance.GetDevice(), Handle(), "Guest memory {:#x}:{:#x}", cpu_addr,
+                          size_bytes);
+    mapped_data = std::span<u8>{static_cast<u8*>(host), size_bytes};
+    is_coherent = true;
 }
 
 Buffer::Buffer(const Vulkan::Instance& instance, VAddr cpu_addr_, u64 size_bytes_,

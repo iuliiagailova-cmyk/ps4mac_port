@@ -22,6 +22,13 @@ SPARTAN_STALE_READBACK = "1"
 # 22.11.2026, 720p service mode: level 25.5 -> 29.7 FPS, fight start 41 -> 36.6 ms a frame
 # (50: 37.9 ms; a submission per guest submit: 46-53 ms). At 8 FPS (20.11) 100 was best.
 SPARTAN_FLUSH_DRAWS = "30"
+# GPU buffers over guest memory in place, no copies (graphics service, arm64): Novalis service
+# memory ~1.6 -> ~0.7 GB, walk 22.7 / 20.9 -> 23.6 / 23.4 FPS, fight unchanged (22.11.2026).
+# 0x8100000000 (180 MiB, the game rewrites it every frame, ~143 MB/s) stays copied: in place,
+# the GPU read data the game had already overwritten (fences are written when work is recorded):
+# overexposed frames with orange halos.
+SPARTAN_HOST_BUFFERS = "1"
+SPARTAN_HOST_BUFFERS_SKIP = "0x8100000000"
 # Buffer hazards between draws inside a render pass follow the game's own sync (cache flush events,
 # AcquireMem) instead of breaking the pass: ~25 fewer render passes a frame on the tiled M1 GPU
 # (level 10.7 -> 13.7 FPS, fight 9.4 -> 11.6; service mode 10.8 -> 13.4, 10.3 -> 12.7).

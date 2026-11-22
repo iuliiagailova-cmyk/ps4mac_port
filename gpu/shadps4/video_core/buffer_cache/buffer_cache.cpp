@@ -104,6 +104,17 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
     // (SPARTAN_DIRECT_MEMORY_ACCESS, off by default); without it a token table saves 512 MiB of
     // GPU memory, which Apple GPUs commit at allocation.
     dma_enabled = EmulatorSettings.IsDirectMemoryAccessEnabled();
+    // Measured with the arm64 graphics service only; the x86 one-process build keeps copies.
+#if defined(__aarch64__)
+    if (const char* env = std::getenv("SPARTAN_HOST_BUFFERS"); env && env[0] == '1') {
+        host_buffers = instance.IsExternalMemoryHostSupported() && !dma_enabled;
+        std::printf("Host buffers: %s\n", host_buffers ? "on (guest memory used in place)"
+                                                       : "unavailable (no VK_EXT_external_memory_host or DMA on)");
+    }
+#endif
+    if (const char* env = std::getenv("SPARTAN_HOST_BUFFERS_MIN_MB")) {
+        host_min_mapping = std::strtoull(env, nullptr, 10) * 1_MB;
+    }
     const u64 bda_pagetable_size =
         dma_enabled ? (blocks_per_arena_page * num_arena_pages) * sizeof(vk::DeviceAddress)
                     : u64{64_KB};
@@ -216,6 +227,16 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
         if (store_size && StoreMayBypass(device_addr, store_size)) {
             store_bypassed = true; // the page stays GPU-modified and protected
             return;
+        }
+        if (host_buffers) {
+            SyncHostRegions();
+            if (const HostRegion* region = FindHostRegion(device_addr, size)) {
+                DownloadHost(device_addr, size, *region);
+                if (is_write) {
+                    memory_tracker->MarkRegionAsCpuModified(device_addr, size);
+                }
+                return;
+            }
         }
         const u32 first_block = device_addr >> block_shift;
         const u32 last_block = (device_addr + size - 1) >> block_shift;
@@ -450,6 +471,24 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
     if (stats) {
         PrintBufferStats();
         NoteHotUse(device_addr, size);
+        // ps4mac_port diagnostic: memory the resident arena blocks would cover at coarser grains.
+        static auto last_cover = std::chrono::steady_clock::now();
+        if (const auto now = std::chrono::steady_clock::now(); now - last_cover >= std::chrono::seconds(5)) {
+            last_cover = now;
+            std::printf("Arena cover:");
+            for (const u32 shift : {14u, 20u, 22u, 24u, 26u}) {
+                u64 chunks = 0, last_chunk = ~0ULL;
+                for (const auto& range : resident_ranges) {
+                    const u64 first = (range.start << block_shift) >> shift;
+                    const u64 last = (((range.end) << block_shift) - 1) >> shift;
+                    chunks += last - first + 1 - (first == last_chunk ? 1 : 0);
+                    last_chunk = last;
+                }
+                std::printf(" %u KiB grain %llu MiB;", 1u << (shift - 10),
+                            (unsigned long long)((chunks << shift) >> 20));
+            }
+            std::printf("\n");
+        }
     }
     // For read-only buffers use device local stream buffer to reduce renderpass breaks.
     if (!is_written && size <= STREAM_THRESHOLD && !IsRegionGpuModified(device_addr, size)) {
@@ -478,6 +517,29 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         memory->CopySparseMemory(device_addr, data, size);
         stream_buffer.Commit();
         return {&stream_buffer, offset};
+    }
+    if (host_buffers) {
+        if (const auto [host, host_offset] = ObtainHostBuffer(device_addr, size); host) {
+            if (stats) {
+                auto& region = Stats().regions[RegionKey(device_addr)];
+                ++region.arena_count;
+                region.arena_bytes += size;
+            }
+            if (is_written) {
+                // GPU-modified and protected: a guest access waits for the writer (DownloadHost).
+                memory_tracker->ForEachUploadRange(device_addr, size, true, [](u64, u64) {}, [] {});
+                gpu_modified_ranges.Add(device_addr, size);
+                const u64 tick = scheduler.CurrentTick();
+                for (u64 block = device_addr >> WRITE_TICK_SHIFT;
+                     block <= (device_addr + size - 1) >> WRITE_TICK_SHIFT; ++block) {
+                    u64& t = write_ticks[block];
+                    t = std::max(t, tick);
+                }
+            } else if (is_texel_buffer) {
+                SynchronizeMemoryFromImage(host, device_addr, size);
+            }
+            return {host, host_offset};
+        }
     }
     const u64 first_block = device_addr >> block_shift;
     const u64 last_block = (device_addr + size - 1) >> block_shift;
@@ -963,6 +1025,153 @@ bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, VAddr device_a
     auto& tile_manager = texture_cache.GetTileManager();
     tile_manager.TileImage(image, buffer_copies, arena, arena_offset);
     return true;
+}
+
+void BufferCache::NoteGuestMap(VAddr address, u64 size) {
+    if (!host_buffers) {
+        return;
+    }
+    const VAddr end = address + size;
+    std::scoped_lock lock{host_mutex};
+    // A mapping over an old one (a remap) replaces its pages: buffers over them must go.
+    std::erase_if(host_regions_shared, [&](const HostRegion& r) {
+        if (r.start < end && address < r.end) {
+            host_dropped.push_back(r);
+            return true;
+        }
+        return false;
+    });
+    // SPARTAN_HOST_BUFFERS_SKIP=<hex start>,...: mappings left to the copying path (bisecting).
+    static const std::vector<VAddr> skip = [] {
+        std::vector<VAddr> list;
+        if (const char* env = std::getenv("SPARTAN_HOST_BUFFERS_SKIP")) {
+            for (const char* p = env; *p;) {
+                char* next = nullptr;
+                list.push_back(std::strtoull(p, &next, 16));
+                p = (*next == ',') ? next + 1 : next;
+                if (next == p && *p == 0) break;
+            }
+        }
+        return list;
+    }();
+    if (size >= host_min_mapping && (address & 16383) == 0 && (size & 16383) == 0 &&
+        std::ranges::find(skip, address) == skip.end()) {
+        const auto at = std::ranges::lower_bound(host_regions_shared, address, {}, &HostRegion::start);
+        host_regions_shared.insert(at, HostRegion{address, end});
+    }
+    host_changed.store(true, std::memory_order_release);
+}
+
+void BufferCache::NoteGuestUnmap(VAddr address, u64 size) {
+    if (!host_buffers) {
+        return;
+    }
+    const VAddr end = address + size;
+    std::scoped_lock lock{host_mutex};
+    std::erase_if(host_regions_shared, [&](const HostRegion& r) {
+        if (r.start < end && address < r.end) {
+            host_dropped.push_back(r);
+            return true;
+        }
+        return false;
+    });
+    host_dropped.push_back({address, end});
+    host_changed.store(true, std::memory_order_release);
+}
+
+void BufferCache::SyncHostRegions() {
+    if (!host_changed.exchange(false, std::memory_order_acq_rel)) {
+        return;
+    }
+    std::vector<HostRegion> dropped;
+    {
+        std::scoped_lock lock{host_mutex};
+        host_regions = host_regions_shared;
+        dropped.swap(host_dropped);
+    }
+    // Buffers over dropped ranges live until the GPU is done with the work recorded so far.
+    for (auto it = host_spans.begin(); it != host_spans.end();) {
+        const VAddr start = it->second->CpuAddr();
+        const VAddr end = start + it->second->SizeBytes();
+        const bool gone = std::ranges::any_of(
+            dropped, [&](const HostRegion& r) { return r.start < end && start < r.end; });
+        if (gone) {
+            scheduler.DeferOperation([buffer = it->second] {});
+            it = host_spans.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+const BufferCache::HostRegion* BufferCache::FindHostRegion(VAddr address, u64 size, bool* straddles) {
+    auto it = std::ranges::upper_bound(host_regions, address, {}, &HostRegion::start);
+    if (it == host_regions.begin()) {
+        return nullptr;
+    }
+    --it;
+    if (address >= it->end) {
+        return nullptr;
+    }
+    if (address + size > it->end) {
+        if (straddles) {
+            *straddles = true;
+        }
+        return nullptr;
+    }
+    return &*it;
+}
+
+std::pair<const Buffer*, u64> BufferCache::ObtainHostBuffer(VAddr device_addr, u64 size) {
+    SyncHostRegions();
+    bool straddles = false;
+    const HostRegion* region = FindHostRegion(device_addr, size, &straddles);
+    if (!region) {
+        host_straddles += straddles;
+        return {nullptr, 0};
+    }
+    const VAddr start = std::max<VAddr>(region->start, Common::AlignDown(device_addr, 1ull << HOST_CHUNK_SHIFT));
+    const VAddr end = std::min<VAddr>(region->end,
+                                      Common::AlignUp(device_addr + size, 1ull << HOST_CHUNK_SHIFT));
+    const u64 key = (start >> 14) << 24 | ((end - start) >> HOST_CHUNK_SHIFT);
+    auto [it, inserted] = host_spans.try_emplace(key);
+    if (inserted) {
+        it->second = std::make_shared<Buffer>(instance, start, end - start,
+                                              reinterpret_cast<void*>(start));
+        if (++host_created <= 32 || (host_created & 255) == 0) {
+            std::printf("Host buffers: %llu created (%#llx, %llu MiB), %llu bindings straddled\n",
+                        (unsigned long long)host_created, (unsigned long long)start,
+                        (unsigned long long)((end - start) >> 20),
+                        (unsigned long long)host_straddles);
+        }
+    }
+    return {it->second.get(), device_addr - start};
+}
+
+void BufferCache::DownloadHost(VAddr device_addr, u64 size, const HostRegion& region) {
+    // The GPU wrote guest memory itself: wait for the newest writer of these pages, then they
+    // are the guest's again (unprotected). Same window as the copying path.
+    constexpr u64 WindowSize = 512_KB;
+    const VAddr window_start = std::max<VAddr>(Common::AlignDown(device_addr, WindowSize), region.start);
+    const VAddr window_end =
+        std::min<VAddr>(std::max<VAddr>(window_start + WindowSize, device_addr + size), region.end);
+    u64 newest = 0;
+    gpu_modified_ranges.ForEachInRange(window_start, window_end - window_start,
+                                       [&](VAddr start, VAddr end) {
+        if (start >= end) {
+            return;
+        }
+        for (u64 block = start >> WRITE_TICK_SHIFT; block <= (end - 1) >> WRITE_TICK_SHIFT; ++block) {
+            if (const auto it = write_ticks.find(block); it != write_ticks.end()) {
+                newest = std::max(newest, it->second);
+            }
+        }
+    });
+    if (newest && !scheduler.IsFree(newest)) {
+        scheduler.Wait(newest);
+    }
+    gpu_modified_ranges.Subtract(window_start, window_end - window_start);
+    memory_tracker->UnmarkRegionAsGpuModified(window_start, window_end - window_start);
 }
 
 void BufferCache::SubmitPendingArenaBinds(Vulkan::SubmitInfo& info) {

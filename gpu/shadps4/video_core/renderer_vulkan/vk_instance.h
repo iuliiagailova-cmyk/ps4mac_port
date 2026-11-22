@@ -146,6 +146,11 @@ public:
         return maintenance_8;
     }
 
+    /// ps4mac_port: VK_EXT_external_memory_host (guest memory imported as buffer memory).
+    bool IsExternalMemoryHostSupported() const {
+        return external_memory_host;
+    }
+
     /// Returns true if VK_EXT_attachment_feedback_loop_layout is supported
     bool IsAttachmentFeedbackLoopLayoutSupported() const {
         return attachment_feedback_loop;
@@ -586,6 +591,7 @@ private:
     bool pipeline_binaries{};
     vk::PipelineBinaryKeyKHR pipeline_binary_global_key{};
     bool maintenance_8{};
+    bool external_memory_host{};
     bool attachment_feedback_loop{};
     bool image_2d_view_of_3d{};
     bool image_view_min_lod{};

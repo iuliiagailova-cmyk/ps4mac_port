@@ -3433,6 +3433,7 @@ bool Rasterizer::IsMapped(VAddr addr, u64 size) {
 }
 
 void Rasterizer::MapMemory(VAddr addr, u64 size) {
+    buffer_cache.NoteGuestMap(addr, size);
     {
         std::scoped_lock lock{mapped_ranges_mutex};
         mapped_ranges += decltype(mapped_ranges)::interval_type::right_open(addr, addr + size);
@@ -3449,6 +3450,7 @@ void Rasterizer::UnmapMemory(VAddr addr, u64 size) {
     // scheduler while the draw recording thread may be recording (the service crashed in
     // Scheduler::ReserveRecordData on a null chunk when a game unmapped at a scene change).
     // DrainDrawPipe only waits on stage A, so the unmap runs there, after the draw pipe drains.
+    buffer_cache.NoteGuestUnmap(addr, size);
     if (!IsGpuSideThread() && liverpool) {
         liverpool->SendCommand<true>([this, addr, size] { UnmapMemory(addr, size); });
         return;

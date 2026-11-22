@@ -77,6 +77,9 @@ static size_t cut(uintptr_t start, uintptr_t end) {
 }
 
 void service_memory_mapped(uintptr_t address, uint64_t size, int prot) {
+    static int log_maps = -1;
+    if (log_maps < 0) log_maps = getenv("PS4MAC_MAP_LOG") != NULL;
+    if (log_maps) fprintf(stderr, "Map %#lx %#llx prot %d\n", (unsigned long)address, (unsigned long long)size, prot);
     pthread_rwlock_wrlock(&table_lock);
     const size_t i = cut(address, address + size);
     insert_at(i, (Range){address, address + size, prot});

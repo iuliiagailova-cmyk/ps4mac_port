@@ -5,7 +5,10 @@
 
 #include "spartanport_copy.h"
 
+#include <atomic>
 #include <deque>
+#include <memory>
+#include <mutex>
 #include <unordered_map>
 #include <boost/container/small_vector.hpp>
 
@@ -113,6 +116,11 @@ public:
     /// Commits pending sparse buffer memory binds. Must be called before every scheduler submit.
     void SubmitPendingArenaBinds(Vulkan::SubmitInfo& info);
 
+    /// ps4mac_port (SPARTAN_HOST_BUFFERS=1): guest mappings, from any thread. Large ones back GPU
+    /// buffers in place (see ObtainHostBuffer); a remap or unmap retires the buffers over it.
+    void NoteGuestMap(VAddr address, u64 size);
+    void NoteGuestUnmap(VAddr address, u64 size);
+
 private:
     struct ArenaBinds {
         const Buffer* arena;
@@ -169,6 +177,29 @@ private:
                                size_t total_size_bytes);
 
     bool SynchronizeMemoryFromImage(const Buffer* arena, VAddr device_addr, u32 size);
+
+    /// ps4mac_port: guest memory as GPU buffers, without a copy (Apple's unified memory). The
+    /// GPU reads and writes large guest mappings in place through buffers over 4 MiB-aligned
+    /// spans of them (a buffer the GPU uses is wired whole: whole mappings would pin gigabytes).
+    /// Guest memory then holds the GPU's writes itself: a guest access to a page the GPU writes
+    /// waits for that work (the page stays protected until then) but copies nothing.
+    static constexpr u32 HOST_CHUNK_SHIFT = 22;
+    struct HostRegion {
+        VAddr start, end;
+    };
+    bool host_buffers = false;
+    u64 host_min_mapping = 16_MB;
+    std::mutex host_mutex;
+    std::vector<HostRegion> host_regions_shared;  ///< guarded by host_mutex
+    std::vector<HostRegion> host_dropped;         ///< guarded by host_mutex
+    std::atomic<bool> host_changed{false};
+    std::vector<HostRegion> host_regions;         ///< the cache owner's copy
+    std::unordered_map<u64, std::shared_ptr<Buffer>> host_spans;
+    u64 host_straddles = 0, host_created = 0;
+    void SyncHostRegions();
+    const HostRegion* FindHostRegion(VAddr address, u64 size, bool* straddles = nullptr);
+    std::pair<const Buffer*, u64> ObtainHostBuffer(VAddr device_addr, u64 size);
+    void DownloadHost(VAddr device_addr, u64 size, const HostRegion& region);
 
     const Vulkan::Instance& instance;
     Vulkan::Scheduler& scheduler;
