@@ -45,16 +45,19 @@ static uint64_t pool_size_bytes(void) {
 /* ps4mac_port, with the graphics service (PS4MAC_SERVICE): guest memory must sit at addresses that
  * are free in the native arm64 service too, i.e. in 0x80_0000_0000-0xFC_0000_0000 (an arm64
  * process has the shared cache below 0xF_C000_0000 and malloc regions in 0x70-0x80_0000_0000;
- * docs/architecture.md 3.2). There: the game's allocator from 0x80 (its profile keeps it below
- * 0xE4), the runtime's own placements in 0xE4-0xF4, low memory in 0xF4-0xFC. */
+ * docs/architecture.md 3.2). There, as on the PS4, the game's image lies below its heaps: low
+ * memory (image, stacks, trampolines) in 0x80-0x88, the game's own allocations from 0x88 (a game
+ * profile that moves its allocator keeps it below 0xEC), the runtime's own placements in
+ * 0xEC-0xFC. Games compare pointers with that order in mind: R&C's pools took the image's
+ * default object (above them, when low memory was at 0xF4) for one of their elements. */
 static int service_layout(void) {
     static int on=-1;
     if (on<0) on=getenv("PS4MAC_SERVICE") && *getenv("PS4MAC_SERVICE");
     return on;
 }
-#define USER_MIN (service_layout() ? UINT64_C(0x8000000000) : UINT64_C(0x7000000000))
-#define USER_MAX (service_layout() ? UINT64_C(0xf400000000) : UINT64_C(0xfc00000000))
-#define RUNTIME_BASE (service_layout() ? UINT64_C(0xe400000000) : USER_MIN)
+#define USER_MIN (service_layout() ? UINT64_C(0x8800000000) : UINT64_C(0x7000000000))
+#define USER_MAX UINT64_C(0xfc00000000)
+#define RUNTIME_BASE (service_layout() ? UINT64_C(0xec00000000) : USER_MIN)
 #else
 #define USER_MIN UINT64_C(0x1000000000)
 #define USER_MAX UINT64_C(0xfc00000000)
@@ -742,8 +745,8 @@ uintptr_t runtime_memory_resolve(const char *name) {
 /* Host-owned memory the guest can see (image, stacks, trampolines) lives in
  * [LOW_MIN, USER_MIN): PS4 code packs pointers into 40-bit fields. */
 #ifdef __APPLE__
-#define LOW_MIN (service_layout() ? UINT64_C(0xf400000000) : UINT64_C(0x0800000000))
-#define LOW_MAX (service_layout() ? UINT64_C(0xfc00000000) : SPARTAN_LOW_HEAP_MIN) /* the runtime's heap (compat_mac.c) follows */
+#define LOW_MIN (service_layout() ? UINT64_C(0x8000000000) : UINT64_C(0x0800000000))
+#define LOW_MAX (service_layout() ? UINT64_C(0x8800000000) : SPARTAN_LOW_HEAP_MIN) /* the runtime's heap (compat_mac.c) follows */
 #else
 #define LOW_MIN UINT64_C(0x0800000000)
 #define LOW_MAX USER_MIN
@@ -950,8 +953,8 @@ void runtime_memory_share(int *pool_out, uint64_t *pool_size, int *low_out, uint
     low_create();
     *pool_out=pool_fd; *pool_size=POOL_SIZE+FLEX_SPAN;
     *low_out=low_fd; *low_base=LOW_MIN; *low_size=LOW_MAX-LOW_MIN;
-    /* The service reserves the whole window: the guest range and low memory above it. */
-    *user_min=USER_MIN; *user_max=LOW_MAX;
+    /* The service reserves the whole window: low memory and the guest range above it. */
+    *user_min=LOW_MIN<USER_MIN ? LOW_MIN : USER_MIN; *user_max=USER_MAX>LOW_MAX ? USER_MAX : LOW_MAX;
 }
 int runtime_memory_is_shared_low(uintptr_t address, uint64_t size) {
     return low_fd>=0 && address>=LOW_MIN && address+size<=LOW_MAX;

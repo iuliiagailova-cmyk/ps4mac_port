@@ -24,11 +24,11 @@ SPARTAN_STALE_READBACK = "1"
 SPARTAN_FLUSH_DRAWS = "30"
 # GPU buffers over guest memory in place, no copies (graphics service, arm64): Novalis service
 # memory ~1.6 -> ~0.7 GB, walk 22.7 / 20.9 -> 23.6 / 23.4 FPS, fight unchanged (22.11.2026).
-# 0x8100000000 (180 MiB, the game rewrites it every frame, ~143 MB/s) stays copied: in place,
+# 0x8900000000 (180 MiB, the game rewrites it every frame, ~143 MB/s) stays copied: in place,
 # the GPU read data the game had already overwritten (fences are written when work is recorded):
 # overexposed frames with orange halos.
 SPARTAN_HOST_BUFFERS = "1"
-SPARTAN_HOST_BUFFERS_SKIP = "0x8100000000"
+SPARTAN_HOST_BUFFERS_SKIP = "0x8900000000"
 # Texture collector budget 3.5 GB instead of the Metal working-set budget (~4.7 GB on an 8 GB M1;
 # the driver's usage includes the imported guest memory). Novalis walk (2 runs each): service VMA
 # 1589 / 1572 vs 1634 / 1772 MiB, swap at the end 2.33 / 2.27 vs 2.36 / 2.45 GB, FPS and >150 ms

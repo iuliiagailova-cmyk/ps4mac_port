@@ -6,21 +6,16 @@
      PRT area 0x1000000000-0xfc00000000) and maps memory there with sceKernelMapDirectMemory, the
      address passed as a hint it relies on. macOS reserves 0xfc0000000-0x7000000000 in every
      process (mmap/mach_vm_allocate fixed there: KERN_NO_SPACE, also under Rosetta 2), so the base
-     moves to 0x8000000000 and the slots to 200 (0x8000000000-0xe400000000: ps4mac_port keeps
-     0xe4-0xfc00000000 for the runtime and low memory, the window an arm64 graphics service shares).
+     moves to 0x8800000000 and the slots to 200 (0x8800000000-0xec00000000: ps4mac_port keeps
+     0x80-0x88 for the image and low memory below it and 0xec-0xfc00000000 for the runtime's own
+     placements, the window an arm64 graphics service shares).
      Patched: the 4 movabs of the base (slot to address), the 3 movabs of 2^63 - base (address to
      slot) and the 4 slot counts. The other 59 uses of 0x1000000000 in the eboot are feature flag
      masks (bit 36) and are left alone.
-     "Bug Fix - Pool Pointer Check": the game's pool reference counts (image offsets 0x1834b80,
-     0x1834bc0, 0x1834c00: get, increment, decrement) turn a pointer into an index with
-     (ptr - base) / 0x1b8 and skip it when ptr - base < -0x1b7 or index > count (signed). A failed
-     lookup in the "Scene Manager" pool returns a default object in the image's .bss
-     (image + 0x4b9c068). On the PS4 the image lies below every pool, the difference is negative and
-     the check skips it; here the image is at 0xf400000000, above the pools (0x80..), so the index
-     came out huge and the increment wrote far outside: the crash flying to Kerwan (its static
-     volumes of type 0 resolve to that default object). The three signed index checks (jg) become
-     unsigned (ja): any pointer outside the pool is skipped, as on the PS4; pool elements are not
-     affected.
+     The game's own pools also rely on the PS4's order of memory: a failed lookup returns a default
+     object in the image's .bss, and the pools' reference counts skip it only because the image lies
+     below them (pointer - pool base < 0). The runtime keeps that order (image at 0x8000000000, the
+     game's memory from 0x8800000000); with the image above the pools, flying to Kerwan crashed.
      "Resolution Patch - <name>": the game's render settings start from a default (image offset
      0x177ca90: mov dword [rdi], 1920; mov dword [rdi+4], 1080; three flags; a null pointer) and the
      game renders its scene at that size, scaling the picture to its own 1920x1080 output buffers
@@ -32,26 +27,19 @@
     <TitleID>
         <ID>CUSA01047</ID>
     </TitleID>
-    <Metadata Title="Ratchet" Name="Bug Fix - Address Space Base" Note="Moves the game's address space allocator from 0x1000000000 (reserved by macOS) to 0x8000000000. Required on macOS." Author="Iuliia Gailova" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="true">
+    <Metadata Title="Ratchet" Name="Bug Fix - Address Space Base" Note="Moves the game's address space allocator from 0x1000000000 (reserved by macOS) to 0x8800000000. Required on macOS." Author="Iuliia Gailova" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="true">
         <PatchList>
-            <Line Type="bytes" Address="0x012bda1d" Value="0000000080000000"/>
-            <Line Type="bytes" Address="0x012bdaaa" Value="0000000080000000"/>
-            <Line Type="bytes" Address="0x012bdde8" Value="0000000080000000"/>
-            <Line Type="bytes" Address="0x012bdece" Value="0000000080000000"/>
-            <Line Type="bytes" Address="0x012bdac8" Value="00000080ffffff7f"/>
-            <Line Type="bytes" Address="0x012bdb30" Value="00000080ffffff7f"/>
-            <Line Type="bytes" Address="0x012bdfe9" Value="00000080ffffff7f"/>
+            <Line Type="bytes" Address="0x012bda1d" Value="0000000088000000"/>
+            <Line Type="bytes" Address="0x012bdaaa" Value="0000000088000000"/>
+            <Line Type="bytes" Address="0x012bdde8" Value="0000000088000000"/>
+            <Line Type="bytes" Address="0x012bdece" Value="0000000088000000"/>
+            <Line Type="bytes" Address="0x012bdac8" Value="00000078ffffff7f"/>
+            <Line Type="bytes" Address="0x012bdb30" Value="00000078ffffff7f"/>
+            <Line Type="bytes" Address="0x012bdfe9" Value="00000078ffffff7f"/>
             <Line Type="bytes" Address="0x012bda0b" Value="c8000000"/>
             <Line Type="bytes" Address="0x012bda64" Value="c8000000"/>
             <Line Type="bytes" Address="0x012bddd1" Value="c8000000"/>
             <Line Type="bytes" Address="0x012bde8b" Value="c8000000"/>
-        </PatchList>
-    </Metadata>
-    <Metadata Title="Ratchet" Name="Bug Fix - Pool Pointer Check" Note="Object pools reject pointers outside them also when the game image lies above the pools (on macOS it does). Required on macOS: fixes the crash flying to Kerwan." Author="Iuliia Gailova" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="true">
-        <PatchList>
-            <Line Type="bytes" Address="0x01c34bab" Value="77" Pattern="48 63 57 70 48 39 d1 7f 0a" At="7"/>
-            <Line Type="bytes" Address="0x01c34be9" Value="77" Pattern="48 63 4f 70 48 39 c8 7f 0a" At="7"/>
-            <Line Type="bytes" Address="0x01c34c29" Value="77" Pattern="48 63 4f 70 48 39 c8 7f 13" At="7"/>
         </PatchList>
     </Metadata>
     <Metadata Title="Ratchet" Name="Resolution Patch - 480p" Note="Renders the game at 854x480 instead of 1920x1080; the game scales the picture to its 1920x1080 output." Author="Iuliia Gailova" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">

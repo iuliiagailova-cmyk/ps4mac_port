@@ -108,7 +108,7 @@ static void map_guest_memory(void) {
     /* Low memory, whole: offset = address - low_base on both sides. */
     if (low_fd >= 0) {
         void *low = (void *)(uintptr_t)block->low_base;
-        /* Inside the reservation above (user_max covers low memory): MAP_FIXED replaces only it. */
+        /* Inside the reservation above (it covers low memory): MAP_FIXED replaces only it. */
         void *q = mmap(low, block->low_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, low_fd, 0);
         if (q != low) {
             fprintf(stderr, "ps4mac_service: cannot map low memory at %p (got %p)\n", low, q);
