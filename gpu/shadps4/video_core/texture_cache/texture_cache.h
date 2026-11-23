@@ -461,7 +461,7 @@ private:
     std::mutex large_refreshes_mutex;
     std::atomic<u64> retire_queued_tick{0}; ///< RnCPort: the copy tick a retire was last queued for
     void PrintRefreshDiagnostics();
-    u64 gc_evictions = 0, gc_downloads = 0; ///< spartanport: pressure report
+    u64 gc_evictions = 0, gc_downloads = 0, gc_writeback_skips = 0; ///< spartanport: pressure report
     std::chrono::steady_clock::time_point gc_report_time{};
     u64 trigger_gc_memory = 0;
     u64 pressure_gc_memory = 0;
