@@ -1774,22 +1774,7 @@ void TextureCache::GarbageCollectImages() {
         if (download && !pressured) {
             return false;
         }
-        // ps4mac_port: only while every page of the image is still write-protected. A CPU
-        // write to the image's bytes then faults and marks it dirty (no write-back). Once a page
-        // is unprotected (a write next to the image on a shared page untracks that page without
-        // marking the image), the game can store there unseen, and the write-back put the old
-        // GPU contents over it: R&C crashed loading Novalis/Kerwan in ~40% of loads, a level
-        // record overwritten (11 of 14 crashes had a write-back, 3 of 38 clean loads).
-        // SPARTAN_GC_WRITEBACK_UNTRACKED=1 writes back as before.
-        static const bool writeback_untracked = [] {
-            const char* env = std::getenv("SPARTAN_GC_WRITEBACK_UNTRACKED");
-            return env && env[0] == '1';
-        }();
-        const bool fully_tracked = image.track_addr == image.info.guest_address &&
-                                   image.track_addr_end == image.info.guest_address + image.info.guest_size;
-        if (download && !fully_tracked && !writeback_untracked) {
-            ++gc_writeback_skips;
-        } else if (download) {
+        if (download) {
             // spartanport: synchronously, while the image still protects its pages. A deferred
             // write-back landed after FreeImage had unprotected them, over whatever the game
             // had meanwhile stored there (e.g. its heap after unloading an area).
@@ -1822,20 +1807,19 @@ void TextureCache::GarbageCollectImages() {
         lru_cache.ForEachItemBelow(gc_tick - ticks_to_destroy, clean_up);
     }
     // spartanport: evictions under memory pressure, at most every 5 s (SPARTAN_FRAME_STATS or not).
-    if (pressured || gc_downloads != 0 || gc_writeback_skips != 0) {
+    if (pressured || gc_downloads != 0) {
         const auto now = std::chrono::steady_clock::now();
         if (now - gc_report_time >= std::chrono::seconds(5)) {
             VmaTotalStatistics vma_stats{};
             vmaCalculateStatistics(instance.GetAllocator(), &vma_stats);
             std::printf("Texture cache: memory pressure, %llu of %llu MiB (critical %llu): "
-                        "%llu images evicted, %llu written back (%llu not: pages unprotected) since the last report; "
+                        "%llu images evicted, %llu written back since the last report; "
                         "images %llu MiB, buffer arenas %llu MiB, VMA %llu MiB in %u allocations "
                         "(%llu MiB used, %u blocks)\n",
                         (unsigned long long)(total_used_memory >> 20),
                         (unsigned long long)(pressure_gc_memory >> 20),
                         (unsigned long long)(critical_gc_memory >> 20),
                         (unsigned long long)gc_evictions, (unsigned long long)gc_downloads,
-                        (unsigned long long)gc_writeback_skips,
                         (unsigned long long)(SpartanStats::image_bytes.load() >> 20),
                         (unsigned long long)(SpartanStats::arena_resident_bytes.load() >> 20),
                         (unsigned long long)(vma_stats.total.statistics.blockBytes >> 20),
@@ -1856,7 +1840,7 @@ void TextureCache::GarbageCollectImages() {
                 }
             }
             gc_report_time = now;
-            gc_evictions = gc_downloads = gc_writeback_skips = 0;
+            gc_evictions = gc_downloads = 0;
             PrintRefreshDiagnostics();
         }
     }
