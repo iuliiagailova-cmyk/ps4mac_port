@@ -1019,9 +1019,18 @@ void Rasterizer::MaybeAutoFlush(bool is_dispatch) {
         boundary = signature != last_target_signature;
         last_target_signature = signature;
     }
-    // Due from half the count at a boundary, at 1.5 times it anywhere (the GPU should not wait
-    // longer for work than before).
-    if (at_boundary ? (boundary ? 2 * work_since_flush < every : 2 * work_since_flush < 3 * every)
+    // Due from half the count at a boundary.
+    // Off a boundary it used to be due at 1.5 times the count as well. That cut long passes in
+    // the middle: on R&C's Novalis ~370 passes a second went on on the same targets after such a
+    // submission (a store and a load of every attachment, and a gap on the GPU). Without it
+    // (23.11.2026, alternating runs): Novalis 21.6 -> 23.4 FPS, level 1 23.2 -> 25.7, fight
+    // 21.4 / 25.9 -> 23.5 / 26.4. SPARTAN_FLUSH_ANYWHERE_X2=<n> brings it back at n/2 times.
+    static const u32 anywhere_x2 = [] {
+        const char* env = std::getenv("SPARTAN_FLUSH_ANYWHERE_X2");
+        return env ? static_cast<u32>(std::strtoul(env, nullptr, 10)) : 0u;
+    }();
+    if (at_boundary ? (boundary ? 2 * work_since_flush < every
+                                : anywhere_x2 == 0 || 2 * work_since_flush < anywhere_x2 * every)
                     : work_since_flush < every) {
         return;
     }
