@@ -21,7 +21,7 @@ for _, row in ET.iterparse(sys.argv[1]):
             n = f.attrib.get('name', '?')
             if not n.startswith('0x'): return n
             a = int(f.attrib.get('addr', n), 16)
-            return 'guest code' if 0xf400000000 <= a < 0xfc00000000 else f'?{a:#x}'
+            return 'guest code' if 0x8000000000 <= a < 0x8800000000 else f'?{a:#x}'
         names = [label(f) for f in frames]
         # leaf: the first frame that is not unknown native, plus the first named frame
         if names: leaf = names[0] if not names[0].startswith('?') else 'native ' + next((n for n in names if not n.startswith('?') and n != 'guest code'), '?')
