@@ -548,6 +548,7 @@ static void sample_host(PadData *d) {
  * releases everything. */
 static struct { uint32_t buttons; int stick[4]; } injected={0,{-1,-1,-1,-1}};
 static int replay_armed;      /* 1 while a SPARTAN_PAD_REPLAY recording plays, 2 once it ended */
+static int record_requested;  /* the token "record" in SPARTAN_PAD_FILE: start SPARTAN_PAD_RECORD now */
 static uint64_t replay_start; /* 0: (re)start at the next sample */
 static void read_inject(void) {
     static const char *path; static int checked; static uint64_t last_check; static struct timespec mtime;
@@ -574,6 +575,7 @@ static void read_inject(void) {
     char token[64];
     while (fscanf(f,"%63s",token)==1) {
         if (!strcmp(token,"replay") && replay_armed!=1) { replay_armed=1; replay_start=0; } /* SPARTAN_PAD_REPLAY */
+        if (!strcmp(token,"record") && !record_requested) record_requested=1; /* SPARTAN_PAD_RECORD */
         for (size_t i=0;i<sizeof(ps_names)/sizeof(*ps_names);++i) if (!strcmp(token,ps_names[i].name)) injected.buttons|=ps_names[i].ps;
         for (int i=0;i<4;++i) if (!strncmp(token,sticks[i],3)) { int v=atoi(token+3); injected.stick[i]=v<0 ? 0 : v>255 ? 255 : v; }
     }
@@ -606,6 +608,30 @@ static void record_sample(const PadData *d) {
         }
     }
     f9_was_down=f9;
+    /* SPARTAN_PAD_RECORD_AUTO=1: recording also starts by itself at the first input (a pressed
+     * button, a trigger or a stick off centre), e.g. Continue on the title screen; MacBook
+     * keyboards send F9 only with Fn. A replay started at that moment lines up with it. */
+    static int auto_start=-1;
+    if (auto_start<0) { const char *e=getenv("SPARTAN_PAD_RECORD_AUTO"); auto_start=e && e[0]=='1'; }
+    /* A scripted session (drive.py) starts the recording with the token "record" at the moment a
+     * replay of it will start with "replay": the player's inputs after it line up. */
+    if (record_requested==1 && !record_file && (record_file=fopen(path,"w"))) {
+        record_requested=2;
+        record_start=now_us();
+        memset(&record_last,0xff,sizeof(record_last));
+        printf("Runtime: pad recording started by the pad file (%s)\n",path);
+    }
+    if (auto_start==1 && !record_file) {
+        int moved=d->buttons || d->l2>32 || d->r2>32;
+        const uint8_t axes[4]={d->left_x,d->left_y,d->right_x,d->right_y};
+        for (int i=0;i<4;++i) if (axes[i]<96 || axes[i]>160) moved=1;
+        if (moved && (record_file=fopen(path,"w"))) {
+            auto_start=2; /* once */
+            record_start=now_us();
+            memset(&record_last,0xff,sizeof(record_last));
+            printf("Runtime: pad recording started at the first input (%s)\n",path);
+        }
+    }
     if (!record_file) return;
     PadSample s={(uint32_t)((now_us()-record_start)/1000),d->buttons,
                  {d->left_x,d->left_y,d->right_x,d->right_y},d->l2,d->r2};
