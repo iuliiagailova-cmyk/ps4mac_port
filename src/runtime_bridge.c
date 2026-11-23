@@ -44,7 +44,8 @@ static pthread_mutex_t push_lock = PTHREAD_MUTEX_INITIALIZER; /* the ring has on
  * 1 in the SPARTAN_LAT_WAIT rip range, 2 in SPARTAN_LAT_PAUSE; ranges "lo-hi", hex), R the render
  * thread (the first to submit graphics work) entered (1) or left (0) SPARTAN_LAT_IMAGE. The main
  * thread is sampled every SPARTAN_LAT_US microseconds (default 200) with thread_get_state; its
- * memory is not read (a read of a GPU-protected page would fault and change the timing). */
+ * memory is not read (a read of a GPU-protected page would fault and change the timing).
+ * SPARTAN_LAT_RIPS=1 adds every sample's rip: G the main thread's, Q the render thread's (in the image). */
 static FILE *lat_file;
 static mach_port_t game_thread_port; /* the game's main thread (runtime_bridge_note_game_thread) */
 static mach_port_t render_thread_port; /* the first thread to submit graphics work */
@@ -418,6 +419,16 @@ static void *lat_thread(void *unused) {
             continue;
         const int state = (st.__rip >= wait_lo && st.__rip < wait_hi) ? 1
                         : (st.__rip >= pause_lo && st.__rip < pause_hi) ? 2 : 0;
+        if (log_rips) {
+            lat_event('G', st.__rip); /* SPARTAN_LAT_RIPS=1: the main thread's rip too */
+            /* In SPARTAN_LAT_PAUSE (the game's spin-wait): its caller, the first return address
+             * into the image among the top stack words (the stack is never GPU-protected). */
+            if (state == 2 && st.__rsp) {
+                const uint64_t *sp = (const uint64_t *)(uintptr_t)st.__rsp;
+                for (int k = 0; k < 24; ++k)
+                    if (sp[k] >= image_lo && sp[k] < image_hi) { lat_event('H', sp[k]); break; }
+            }
+        }
         if (state != last) lat_event('M', (uint64_t)state);
         if (state == 1 && last != 1) { /* the address it waits on (R&C: r15 + 4 * r13), when it changes */
             static uint64_t last_address;
@@ -433,6 +444,11 @@ static void *lat_thread(void *unused) {
             if (thread_get_state(render_thread_port, x86_THREAD_STATE64, (thread_state_t)&rs, &rn) == KERN_SUCCESS) {
                 const int in_game = rs.__rip >= image_lo && rs.__rip < image_hi;
                 if (log_rips && in_game) lat_event('Q', rs.__rip); /* SPARTAN_LAT_RIPS=1: where */
+                if (log_rips && rs.__rip >= pause_lo && rs.__rip < pause_hi && rs.__rsp) {
+                    const uint64_t *sp = (const uint64_t *)(uintptr_t)rs.__rsp;
+                    for (int k = 0; k < 24; ++k)
+                        if (sp[k] >= image_lo && sp[k] < image_hi) { lat_event('K', sp[k]); break; }
+                }
                 if (in_game != last_render) lat_event('R', (uint64_t)in_game);
                 last_render = in_game;
             }
