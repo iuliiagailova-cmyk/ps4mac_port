@@ -11,6 +11,16 @@
      Patched: the 4 movabs of the base (slot to address), the 3 movabs of 2^63 - base (address to
      slot) and the 4 slot counts. The other 59 uses of 0x1000000000 in the eboot are feature flag
      masks (bit 36) and are left alone.
+     "Bug Fix - Pool Pointer Check": the game's pool reference counts (image offsets 0x1834b80,
+     0x1834bc0, 0x1834c00: get, increment, decrement) turn a pointer into an index with
+     (ptr - base) / 0x1b8 and skip it when ptr - base < -0x1b7 or index > count (signed). A failed
+     lookup in the "Scene Manager" pool returns a default object in the image's .bss
+     (image + 0x4b9c068). On the PS4 the image lies below every pool, the difference is negative and
+     the check skips it; here the image is at 0xf400000000, above the pools (0x80..), so the index
+     came out huge and the increment wrote far outside: the crash flying to Kerwan (its static
+     volumes of type 0 resolve to that default object). The three signed index checks (jg) become
+     unsigned (ja): any pointer outside the pool is skipped, as on the PS4; pool elements are not
+     affected.
      "Resolution Patch - <name>": the game's render settings start from a default (image offset
      0x177ca90: mov dword [rdi], 1920; mov dword [rdi+4], 1080; three flags; a null pointer) and the
      game renders its scene at that size, scaling the picture to its own 1920x1080 output buffers
@@ -35,6 +45,13 @@
             <Line Type="bytes" Address="0x012bda64" Value="c8000000"/>
             <Line Type="bytes" Address="0x012bddd1" Value="c8000000"/>
             <Line Type="bytes" Address="0x012bde8b" Value="c8000000"/>
+        </PatchList>
+    </Metadata>
+    <Metadata Title="Ratchet" Name="Bug Fix - Pool Pointer Check" Note="Object pools reject pointers outside them also when the game image lies above the pools (on macOS it does). Required on macOS: fixes the crash flying to Kerwan." Author="Iuliia Gailova" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="true">
+        <PatchList>
+            <Line Type="bytes" Address="0x01c34bab" Value="77" Pattern="48 63 57 70 48 39 d1 7f 0a" At="7"/>
+            <Line Type="bytes" Address="0x01c34be9" Value="77" Pattern="48 63 4f 70 48 39 c8 7f 0a" At="7"/>
+            <Line Type="bytes" Address="0x01c34c29" Value="77" Pattern="48 63 4f 70 48 39 c8 7f 13" At="7"/>
         </PatchList>
     </Metadata>
     <Metadata Title="Ratchet" Name="Resolution Patch - 480p" Note="Renders the game at 854x480 instead of 1920x1080; the game scales the picture to its 1920x1080 output." Author="Iuliia Gailova" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
