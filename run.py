@@ -345,14 +345,16 @@ def main():
         # The window shows the port's own icon (BMP: the format SDL loads without extra libraries); on
         # Linux also an application id the desktop entry matches, so the shell shows the same icon.
         # The game's icon from its profile, 256 px so the macOS Dock shows it sharp.
-        icon_file = port_profile.icon if port_profile else None
+        # A game without a profile shows the dump's own icon (sce_sys/icon0.png), if any.
+        icon_file = port_profile.icon if port_profile else game / 'sce_sys' / 'icon0.png'
         if not WINDOWS:
             env.setdefault('SDL_APP_ID', app_name.lower())
         try:
             from PIL import Image
-            with Image.open(icon_file) as icon:
-                icon.convert('RGBA').resize((256, 256), Image.LANCZOS).save(out / 'window_icon.bmp')
-            env.setdefault('SPARTAN_WINDOW_ICON', str(out / 'window_icon.bmp'))
+            if icon_file and Path(icon_file).is_file():
+                with Image.open(icon_file) as icon:
+                    icon.convert('RGBA').resize((256, 256), Image.LANCZOS).save(out / 'window_icon.bmp')
+                env.setdefault('SPARTAN_WINDOW_ICON', str(out / 'window_icon.bmp'))
         except (ImportError, OSError):
             pass
         # The temporal upscalers and motion vectors are not calibrated for this game yet: they stay
