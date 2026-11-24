@@ -13,37 +13,13 @@ file = "patches.xml"               # "Bug Fix - Address Space Base": required on
 app_ver = "01.00"
 
 [env]
-# The game reads GPU results every frame; stale readbacks keep CPU and GPU from waiting for each
-# other (readbacks are published as soon as the GPU completes them).
-SPARTAN_DEFERRED_READBACK = "1"
-SPARTAN_STALE_READBACK = "1"
-# Submit every 30 draws/dispatches: the GPU starts while the frame is still recorded, and the
-# game, which waits every frame for its own GPU work (faults on GPU-written pages), waits less.
-# 22.11.2026, 720p service mode: level 25.5 -> 29.7 FPS, fight start 41 -> 36.6 ms a frame
-# (50: 37.9 ms; a submission per guest submit: 46-53 ms). At 8 FPS (20.11) 100 was best.
-SPARTAN_FLUSH_DRAWS = "30"
-# GPU buffers over guest memory in place, no copies (graphics service, arm64): Novalis service
-# memory ~1.6 -> ~0.7 GB, walk 22.7 / 20.9 -> 23.6 / 23.4 FPS, fight unchanged (22.11.2026).
-# 0x8900000000 (180 MiB, the game rewrites it every frame, ~143 MB/s) stays copied: in place,
-# the GPU read data the game had already overwritten (fences are written when work is recorded):
+# The speed settings that were found here (readbacks, submissions every 30 draws, buffers in place,
+# guest sync barriers, no driver bounds checks, the 3.5 GB texture budget on 8 GB Macs) are core
+# defaults since 24.11.2026 (run.py, docs/architecture.md). What stays is R&C's own:
+# 0x8900000000 (180 MiB, the game rewrites it every frame, ~143 MB/s) stays copied: in place, the
+# GPU read data the game had already overwritten (fences are written when work is recorded):
 # overexposed frames with orange halos.
-SPARTAN_HOST_BUFFERS = "1"
 SPARTAN_HOST_BUFFERS_SKIP = "0x8900000000"
-# Texture collector budget 3.5 GB instead of the Metal working-set budget (~4.7 GB on an 8 GB M1;
-# the driver's usage includes the imported guest memory). Novalis walk (2 runs each): service VMA
-# 1589 / 1572 vs 1634 / 1772 MiB, swap at the end 2.33 / 2.27 vs 2.36 / 2.45 GB, FPS and >150 ms
-# stalls the same or better (21.8 / 24.6 vs 21.8 / 24.4; 17 / 10 vs 17 / 15).
-SPARTAN_GC_BUDGET_MB = "3500"
-# Buffer hazards between draws inside a render pass follow the game's own sync (cache flush events,
-# AcquireMem) instead of breaking the pass: ~25 fewer render passes a frame on the tiled M1 GPU
-# (level 10.7 -> 13.7 FPS, fight 9.4 -> 11.6; service mode 10.8 -> 13.4, 10.3 -> 12.7).
-SPARTAN_GUEST_SYNC_BARRIERS = "1"
-# No driver bounds checks on buffer accesses (robustBufferAccess/2 off): checking every access costs
-# ~15% of the frame. The recompiled shaders check their own stores and atomics instead (GCN drops
-# them past the end): level 13.8 -> 15.8 FPS, fight 12.7 -> 14.7 (service mode, frames checked).
-# Image checks stay.
-SPARTAN_NO_ROBUSTNESS = "buffer"
-SPARTAN_SHADER_BOUNDS = "writes"
 
 [known_issues]
 fire_green_bars = "Rare green vertical bars over fire for half a second (seen once with stale readbacks)"

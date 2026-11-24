@@ -251,6 +251,20 @@ def main():
     env.setdefault('SPARTAN_APP_NAME', app_name)
     # Frame statistics in the log (a few lines every few seconds): every report then has FPS.
     env.setdefault('SPARTAN_FRAME_STATS', '1')
+    # The core's speed settings, measured on two games (docs/architecture.md, 24.11.2026): Ratchet &
+    # Clank (where each was found) and God of War III, which got +8% from them with frames unchanged.
+    # A game's profile or the environment can turn each off.
+    # - submit every 30 draws/dispatches: the GPU starts while the frame is still recorded;
+    # - GPU buffers over guest memory in place (graphics service, arm64): no copies (a range the game
+    #   rewrites while the GPU reads it stays copied: SPARTAN_HOST_BUFFERS_SKIP in its profile);
+    # - buffer hazards inside a render pass follow the game's own sync (fewer passes on tiled GPUs);
+    # - no driver bounds checks on buffer accesses (~15% of a frame); the recompiled shaders check
+    #   their own stores. Reads past a buffer return nearby data instead of 0: a game showing
+    #   garbage sets SPARTAN_SHADER_BOUNDS=1 (all accesses checked, ~13% slower).
+    for name, value in (('SPARTAN_FLUSH_DRAWS', '30'), ('SPARTAN_HOST_BUFFERS', '1'),
+                        ('SPARTAN_GUEST_SYNC_BARRIERS', '1'), ('SPARTAN_NO_ROBUSTNESS', 'buffer'),
+                        ('SPARTAN_SHADER_BOUNDS', 'writes')):
+        env.setdefault(name, value)
     # Macs with 8 GB or less: keep less idle upload memory around (GPU memory is system memory).
     if platform.system() == 'Darwin':
         try:
@@ -264,6 +278,9 @@ def main():
             env.setdefault('SPARTAN_STAGING_LARGE_KEEP_MB', '256')
             env.setdefault('SPARTAN_STAGING_RING_IDLE_MS', '3000')
             env.setdefault('SPARTAN_VMA_BLOCK_MB', '32')
+            # Texture collector budget 3.5 GB instead of Metal's working-set budget (~4.7 GB, which
+            # counts the imported guest memory too): less swap, FPS the same (R&C, Novalis walk).
+            env.setdefault('SPARTAN_GC_BUDGET_MB', '3500')
             print('Memory: 8 GB Mac, upload buffers kept small (SPARTAN_STAGING_*)')
     if port_profile:
         ini = graphics_options.read_ini(env['SPARTAN_CONFIG'])
