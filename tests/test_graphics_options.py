@@ -179,7 +179,7 @@ class GraphicsOptionsTest(unittest.TestCase):
 
     def test_every_built_in_resolution_has_a_patch(self):
         import patches
-        xml = Path(__file__).resolve().parent.parent / 'patches' / 'CUSA01623.xml'
+        xml = Path(__file__).resolve().parent.parent / 'games' / 'CUSA01623' / 'patches.xml'
         self.assertEqual(sorted(r for r in g.RESOLUTIONS if r != 'native'), sorted(patches.resolution_names([xml])))
 
     def test_900p_is_the_built_in_size_between_720p_and_1440p(self):
@@ -187,7 +187,7 @@ class GraphicsOptionsTest(unittest.TestCase):
         self.assertEqual(g.RESOLUTIONS.index('900p'), 3)
         self.assertEqual(g.SIZES['900p'], (1600, 900))
         import xml.etree.ElementTree as ET
-        xml = Path(__file__).resolve().parent.parent / 'patches' / 'CUSA01623.xml'
+        xml = Path(__file__).resolve().parent.parent / 'games' / 'CUSA01623' / 'patches.xml'
         names = {m.get('Name') for m in ET.parse(xml).getroot().iter('Metadata')}
         self.assertIn('Resolution Patch - 900p', names)
 

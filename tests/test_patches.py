@@ -11,7 +11,7 @@ from patches import (compile_patches, external_patches, external_selection, comp
                      game_profile, selected_patches, patch_requirements, GAMES, merge_patch_files,
                      resolution_names, default_enabled)
 
-SPARTAN = ROOT / 'patches/CUSA01623.xml'
+SPARTAN = ROOT / 'games/CUSA01623/patches.xml'
 ULTRAWIDE = ROOT / 'extras/mods/Ultrawide/patches/Ultrawide.xml'
 SPARTAN_IDS = {'CUSA01623'}
 SEGMENTS = [(0, 0x6000000)]
@@ -102,9 +102,9 @@ class GameProfileTests(unittest.TestCase):
         from unittest import mock
         import patches
         self.assertEqual(game_profile('CUSA01715')[1], SPARTAN)
-        self.assertEqual(game_profile('CUSA99999', 'SpartanPort® III Remastered')[1], SPARTAN)
+        self.assertEqual(game_profile('CUSA99999', 'God of War® III Remastered')[1], SPARTAN)
         self.assertIsNone(game_profile('CUSA99999', 'Another Game'))
-        with mock.patch.object(patches, 'game_sfo', return_value={'TITLE_ID': 'CUSA77777', 'TITLE': 'SpartanPort'}):
+        with mock.patch.object(patches, 'game_sfo', return_value={'TITLE_ID': 'CUSA77777', 'TITLE': 'God of War III'}):
             self.assertTrue(patches.game_patchable('folder'))
         self.assertFalse(patches.game_patchable(None))
         with tempfile.TemporaryDirectory() as folder:

@@ -246,10 +246,6 @@ def main():
         env.pop(key, None)
     derived = []
     import graphics_options
-    try:
-        import discord_presence
-    except Exception:
-        discord_presence = None
     import mods
     import patches
     # The enabled mods' patch files: their "Resolution Patch - <size>" entries are render resolutions too
@@ -478,16 +474,7 @@ def main():
                    '--timeout', env.get('SPARTAN_TIMEOUT', '0'), *isa_args, *mount_args, *args]
         # No stdin: an inherited pipe (shells such as Git Bash) cost the game its console output.
         process = subprocess.Popen(command, stdin=subprocess.DEVNULL, creationflags=no_console())
-        presence = None
-        try:
-            try:
-                presence = discord_presence.Presence(pid=process.pid) if discord_presence else None
-            except (OSError, RuntimeError):
-                print('Discord presence unavailable; the game will continue', flush=True)
-            return process.wait()
-        finally:
-            if presence:
-                presence.close()
+        return process.wait()
     finally:
         if mod_view:
             shutil.rmtree(mod_view, ignore_errors=True)
