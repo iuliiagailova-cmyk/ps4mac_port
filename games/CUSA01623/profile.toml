@@ -1,0 +1,27 @@
+# God of War III Remastered (PS4) — game profile for ps4mac_port.
+# Data only: the core reads it by the Title ID in sce_sys/param.sfo. Environment variables (and
+# spartanport.ini, for the options it holds) win over the defaults below.
+
+title = "God of War III Remastered"
+title_ids = ["CUSA01623", "CUSA01715", "CUSA01720"]  # tested: CUSA01623 v01.00 (US)
+match_title = "God of War"
+app_name = "GoW3Port"
+
+[patches]
+# SpartanPort's patch file (Texture Corruption Fix, resolution patches, ...). Its entries are tagged
+# 01.02 but find their sites by signature, so they apply to v01.00 as well.
+file = "patches.xml"
+app_ver = "01.02"
+
+[env]
+# The core's speed settings, as in Ratchet & Clank's profile (24.11.2026, first fight on Gaia, New Game,
+# cutscenes skipped, M1 8 GB, 2 runs each): 1080p 13.6 / 13.7 FPS without them, 14.7 / 15.0 with them;
+# with the 720p resolution patch (in-game menu: render resolution) 24.3 / 24.4. Frames checked.
+SPARTAN_DEFERRED_READBACK = "1"
+SPARTAN_STALE_READBACK = "1"
+SPARTAN_FLUSH_DRAWS = "30"
+SPARTAN_HOST_BUFFERS = "1"
+SPARTAN_GC_BUDGET_MB = "3500"
+SPARTAN_GUEST_SYNC_BARRIERS = "1"
+SPARTAN_NO_ROBUSTNESS = "buffer"
+SPARTAN_SHADER_BOUNDS = "writes"

@@ -345,8 +345,9 @@ def main():
         # The window shows the port's own icon (BMP: the format SDL loads without extra libraries); on
         # Linux also an application id the desktop entry matches, so the shell shows the same icon.
         # The game's icon from its profile, 256 px so the macOS Dock shows it sharp.
-        # A game without a profile shows the dump's own icon (sce_sys/icon0.png), if any.
-        icon_file = port_profile.icon if port_profile else game / 'sce_sys' / 'icon0.png'
+        # A game whose profile names no icon (or without a profile) shows the dump's own icon
+        # (sce_sys/icon0.png), if any.
+        icon_file = port_profile.icon if port_profile and port_profile.icon else game / 'sce_sys' / 'icon0.png'
         if not WINDOWS:
             env.setdefault('SDL_APP_ID', app_name.lower())
         try:
