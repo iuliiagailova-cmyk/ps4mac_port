@@ -312,10 +312,10 @@ extern "C" int spartanportgpu_init(const SpartanGpuConfig* config) {
         Libraries::VideoOut::RegisterLib(&resolver);
         return 0;
     }
-    // The window carries the project name (SPARTAN_APP_NAME, set by run.py); the dump's own title
-    // stays in ElfInfo (above).
+    // The window carries the game's title (SPARTAN_APP_NAME: run.py takes it from the dump's
+    // param.sfo).
     const char* app_name = std::getenv("SPARTAN_APP_NAME");
-    const std::string title = app_name && *app_name ? app_name : "SpartanPort";
+    const std::string title = app_name && *app_name ? app_name : "ps4mac_port";
     const s32 width = config->width, height = config->height;
 #ifdef __APPLE__
     {
@@ -356,7 +356,7 @@ extern "C" int spartanportgpu_service_init(const SpartanGpuConfig* config,
     g_sdk_version = config->sdk_version;
     Core::Emulator::FillElfInfo(*config);
     const char* app_name = std::getenv("SPARTAN_APP_NAME");
-    const std::string title = app_name && *app_name ? app_name : "SpartanPort";
+    const std::string title = app_name && *app_name ? app_name : "ps4mac_port";
     {
         std::scoped_lock lock{g_window_mutex};
         g_window_title = title;

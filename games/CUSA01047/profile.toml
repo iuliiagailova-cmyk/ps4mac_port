@@ -5,7 +5,6 @@
 title = "Ratchet & Clank"
 title_ids = ["CUSA01047"]          # EU; CUSA01073 and CUSA01928 not tested yet
 match_title = "Ratchet"
-app_name = "RnCPort"               # window title, in-game menu, data folder (~/Library/Application Support/RnCPort)
 
 [patches]
 file = "patches.xml"               # "Bug Fix - Address Space Base": required on macOS

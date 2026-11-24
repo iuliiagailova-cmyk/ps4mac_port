@@ -20,7 +20,6 @@ class Profile:
     title: str
     title_ids: tuple[str, ...]
     match_title: str = ''          # also recognizes a release under an unlisted ID by its title
-    app_name: str = 'ps4mac_port'  # window title, in-game menu, data folder name
     icon: Path | None = None
     patch_file: Path | None = None
     patch_app_ver: str = ''
@@ -44,7 +43,6 @@ def _load(path: Path) -> Profile:
         title=data['title'],
         title_ids=tuple(data['title_ids']),
         match_title=data.get('match_title', ''),
-        app_name=data.get('app_name', 'ps4mac_port'),
         icon=folder / icon if icon else None,
         patch_file=folder / patches['file'] if patches.get('file') else None,
         patch_app_ver=patches.get('app_ver', ''),

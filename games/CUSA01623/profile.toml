@@ -5,7 +5,6 @@
 title = "God of War III Remastered"
 title_ids = ["CUSA01623", "CUSA01715", "CUSA01720"]  # tested: CUSA01623 v01.00 (US)
 match_title = "God of War"
-app_name = "GoW3Port"
 
 [patches]
 # SpartanPort's patch file (Texture Corruption Fix, resolution patches, ...). Its entries are tagged

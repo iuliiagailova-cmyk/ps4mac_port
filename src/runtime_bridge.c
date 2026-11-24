@@ -545,9 +545,28 @@ static char **service_environment(const char *service) {
     return env;
 }
 
+/* The service owns the window, and macOS shows an unbundled program's file name in the menu bar
+ * and the Dock: it starts through a hard link named after the game (SPARTAN_APP_NAME, the dump's
+ * title), next to the service so its libraries resolve as before. Made fresh on every launch (a
+ * rebuild replaces the service file); on any failure the service starts under its own name. */
+static const char *service_named(const char *service, char *path, size_t size) {
+    const char *title = getenv("SPARTAN_APP_NAME");
+    const char *slash = strrchr(service, '/');
+    if (!title || !*title || !slash) return service;
+    const int dir = (int)(slash - service + 1);
+    int n = snprintf(path, size, "%.*s", dir, service);
+    for (const char *c = title; *c && n + 1 < (int)size && n < dir + 200; ++c)
+        path[n++] = (*c == '/' || *c == ':') ? ' ' : *c;
+    path[n] = 0;
+    unlink(path);
+    return link(service, path) == 0 ? path : service;
+}
+
 void runtime_bridge_start(void) {
-    const char *service = getenv("PS4MAC_SERVICE");
-    if (!service || !*service) return;
+    const char *service_file = getenv("PS4MAC_SERVICE");
+    if (!service_file || !*service_file) return;
+    char service_path[1024];
+    const char *service = service_named(service_file, service_path, sizeof(service_path));
     char name[64];
     snprintf(name, sizeof(name), "/ps4mac-bridge-%d", (int)getpid());
     const int block_fd = shm_open(name, O_RDWR | O_CREAT | O_EXCL, 0600);

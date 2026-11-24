@@ -185,9 +185,27 @@ def pause_menu_args(game, out, mounts):
 
 # ps4mac_port defaults: the dump in a folder named after a profiled Title ID (games/<id>/) next to
 # the port or one level further; settings, saves and generated files in
-# ~/Library/Application Support/<the profile's app_name> on macOS (elsewhere: the port folder).
-def default_data_dir(app_name):
-    return Path.home() / 'Library' / 'Application Support' / app_name if platform.system() == 'Darwin' else PORT
+# ~/Library/Application Support/ps4mac_port/<Title ID> on macOS (elsewhere: data/<Title ID> in the
+# port folder): one folder per game, named by the dump, nothing to configure.
+def default_data_dir(title_id):
+    base = Path.home() / 'Library' / 'Application Support' / 'ps4mac_port' if platform.system() == 'Darwin' else PORT / 'data'
+    return base / (title_id or 'game')
+
+
+# Data folders of the ports' former names (before 24.11.2026 each profile named its own): moved once
+# to the new folder, so the saves, settings and shader cache stay with the game.
+LEGACY_DATA_DIRS = {'CUSA01047': 'RnCPort'}
+
+
+def move_legacy_data(title_id, data):
+    old = LEGACY_DATA_DIRS.get(title_id)
+    if not old or platform.system() != 'Darwin' or data.exists():
+        return
+    old = Path.home() / 'Library' / 'Application Support' / old
+    if old.is_dir():
+        data.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(old), str(data))
+        print(f'Data: moved {old} to {data}', flush=True)
 
 
 def main():
@@ -212,8 +230,12 @@ def main():
     game_dir = Path(env['SPARTAN_GAME_DIR'])
     sfo = game_sfo(game_dir)
     port_profile = profiles.find(sfo.get('TITLE_ID'), sfo.get('TITLE'))
-    app_name = port_profile.app_name if port_profile else 'ps4mac_port'
-    data = Path(env.get('SPARTAN_DATA_DIR', default_data_dir(app_name)))
+    # The game's name everywhere (window, menu bar, Dock, in-game menu) is the dump's own title.
+    title_id = sfo.get('TITLE_ID') or ''
+    app_name = (sfo.get('TITLE') or title_id or 'ps4mac_port').strip()
+    if 'SPARTAN_DATA_DIR' not in env:
+        move_legacy_data(title_id, default_data_dir(title_id))
+    data = Path(env.get('SPARTAN_DATA_DIR', default_data_dir(title_id)))
     legacy.copy_game_settings(data)
     out = data / 'out'
     out.mkdir(parents=True, exist_ok=True)
@@ -247,7 +269,7 @@ def main():
     profile_env = port_profile.env if port_profile else {}
     explicit = {k: env[k] for k in profile_env if k in env}
     env.update(graphics_options.environment(graphics))
-    # The port's name (the profile's app_name) in the window title and the in-game menu.
+    # The game's title (from the dump) in the window title, the menu bar and the in-game menu.
     env.setdefault('SPARTAN_APP_NAME', app_name)
     # Frame statistics in the log (a few lines every few seconds): every report then has FPS.
     env.setdefault('SPARTAN_FRAME_STATS', '1')
@@ -366,7 +388,7 @@ def main():
         # (sce_sys/icon0.png), if any.
         icon_file = port_profile.icon if port_profile and port_profile.icon else game / 'sce_sys' / 'icon0.png'
         if not WINDOWS:
-            env.setdefault('SDL_APP_ID', app_name.lower())
+            env.setdefault('SDL_APP_ID', 'ps4mac_port.' + (title_id or 'game').lower())
         try:
             from PIL import Image
             if icon_file and Path(icon_file).is_file():

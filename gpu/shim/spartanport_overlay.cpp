@@ -611,7 +611,7 @@ void Menu() {
     static const std::string heading = [] {
         const std::string_view title = Common::ElfInfo::Instance().Title();
         const char* app_name = std::getenv("SPARTAN_APP_NAME");
-        const std::string fallback = app_name && *app_name ? app_name : "SpartanPort";
+        const std::string fallback = app_name && *app_name ? app_name : "ps4mac_port";
         return std::string(title.empty() ? fallback : std::string(title)) + PadText("  (Insert / R3+L2)", "  (Insert / RS+LT)", "  (Insert / RS+ZL)");
     }();
     if (!ImGui::Begin(heading.c_str(), &keep_open, ImGuiWindowFlags_NoCollapse)) {
