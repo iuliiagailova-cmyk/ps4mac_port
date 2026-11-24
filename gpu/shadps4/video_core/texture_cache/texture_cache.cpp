@@ -377,7 +377,7 @@ void TextureCache::ProcessDownloadImages() {
                     pending_readbacks.Push(copy->guest_address, copy->size,
                         scheduler.CurrentTick(), copy->staging, stale);
                     has_pending_readbacks.store(true, std::memory_order_release);
-                    // RnCPort: publish the copy as soon as the GPU is past it. Stale reads
+                    // ps4mac_port: publish the copy as soon as the GPU is past it. Stale reads
                     // otherwise saw new data only at the next access through the GPU layer: a
                     // guest spinning on the memory (Ratchet & Clank's loading) never got it.
                     static const bool retire_on_completion = [] {

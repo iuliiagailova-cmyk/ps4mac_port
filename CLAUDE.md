@@ -2,7 +2,7 @@
 
 ### Issue tracker
 
-GitHub Issues on `iuliiagailova-cmyk/RnCPort` (`origin`); always pass `-R iuliiagailova-cmyk/RnCPort` to `gh`. Upstream (SpartanPort) is `upstream`, read-only. See `docs/agents/issue-tracker.md`.
+GitHub Issues on `iuliiagailova-cmyk/ps4mac_port` (`origin`); always pass `-R iuliiagailova-cmyk/ps4mac_port` to `gh`. SpartanPort is `spartanport-fork`, read-only (push disabled). See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

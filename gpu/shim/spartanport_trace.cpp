@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// RnCPort: see spartanport_trace.h.
+// ps4mac_port: see spartanport_trace.h.
 #include "spartanport_trace.h"
 
 #include <pthread.h>

@@ -459,7 +459,7 @@ private:
     };
     std::unordered_map<u64, LargeRefresh> large_refreshes;
     std::mutex large_refreshes_mutex;
-    std::atomic<u64> retire_queued_tick{0}; ///< RnCPort: the copy tick a retire was last queued for
+    std::atomic<u64> retire_queued_tick{0}; ///< ps4mac_port: the copy tick a retire was last queued for
     void PrintRefreshDiagnostics();
     u64 gc_evictions = 0, gc_downloads = 0; ///< spartanport: pressure report
     std::chrono::steady_clock::time_point gc_report_time{};

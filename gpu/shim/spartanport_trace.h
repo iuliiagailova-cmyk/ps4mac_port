@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// RnCPort: a timeline of the GPU layer's threads for a few seconds, as Chrome trace JSON
+// ps4mac_port: a timeline of the GPU layer's threads for a few seconds, as Chrome trace JSON
 // (opens in https://ui.perfetto.dev).
 //
 // SPARTAN_TRACE=<file.json> enables it. Recording starts when SPARTAN_TRACE_TRIGGER=<file>

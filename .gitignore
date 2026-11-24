@@ -31,4 +31,3 @@ patches.json
 !packaging/icon/monogram.png
 /.vscode
 
-!games/*/branding/*.png
