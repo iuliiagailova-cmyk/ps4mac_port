@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds dist/spartanport-windows/ (and dist/spartanport-windows.zip): SpartanPort.exe (the launcher, frozen
-# with PyInstaller so players need no Python), spartanport-probe.exe with the MSYS2 CLANG64 DLLs it needs,
+# with PyInstaller so players need no Python), ps4mac_runtime.exe with the MSYS2 CLANG64 DLLs it needs,
 # the preparation scripts and run.py. Run from an MSYS2 CLANG64 shell after `bash build.sh`.
 # Freezing uses a Windows Python 3.10+ (python.org; WINPYTHON overrides) and a private venv in
 # out/pyenv with PyInstaller and Pillow (the game icon and the Steam pictures need it). The
@@ -9,7 +9,7 @@
 set -euo pipefail
 cd -- "$(dirname -- "$0")/../.."
 source ./msys2-env.sh
-[[ -f out/spartanport-probe.exe && -f out/spartanport-gpu-capabilities.exe && -f out/spartanport-play.exe ]] || { echo 'Build first: bash build.sh' >&2; exit 1; }
+[[ -f out/ps4mac_runtime.exe && -f out/spartanport-gpu-capabilities.exe && -f out/spartanport-play.exe ]] || { echo 'Build first: bash build.sh' >&2; exit 1; }
 
 # A Windows Python (not MSYS2's) for PyInstaller.
 python=${WINPYTHON:-}
@@ -50,11 +50,11 @@ cp "$dest/SpartanPort.exe" "$dest/$(sed -n 1p <<< "$legacy_names")"
 cp "$dest/Play SpartanPort.exe" "$dest/$(sed -n 2p <<< "$legacy_names")"
 cp launcher/spartanport.ico launcher/spartanport.png launcher/logo.png launcher/Cinzel-Black.ttf launcher/OFL-Cinzel.txt "$dest/launcher/"
 # The executables without debug information (out/ keeps the symbols for crash reports).
-for exe in spartanport-probe.exe spartanport-gpu-capabilities.exe; do
+for exe in ps4mac_runtime.exe spartanport-gpu-capabilities.exe; do
     llvm-strip --strip-debug -o "$dest/bin/$exe" "out/$exe"
 done
 # Every DLL the executables load from the CLANG64 tree (SDL3, FFmpeg, Vulkan loader, ...).
-ldd "$dest/bin/spartanport-probe.exe" "$dest/bin/spartanport-gpu-capabilities.exe" |
+ldd "$dest/bin/ps4mac_runtime.exe" "$dest/bin/spartanport-gpu-capabilities.exe" |
     awk '/\/clang64\/bin\// {print $3}' | sort -u | while read -r dll; do
         cp -u "$dll" "$dest/bin/"
     done

@@ -11,7 +11,7 @@
 set -euo pipefail
 cd -- "$(dirname -- "$0")/../.."
 [[ $(uname -s) == Darwin ]] || { echo 'packaging/macos/package.sh is for macOS.' >&2; exit 1; }
-for file in out/spartanport-probe out/spartanport-gpu-capabilities out/gpu/libspartanportgpu.dylib \
+for file in out/ps4mac_runtime out/spartanport-gpu-capabilities out/gpu/libspartanportgpu.dylib \
             out/kosmickrisp_mesa_icd.json; do
     [[ -f $file ]] || { echo "Build first: bash build.sh ($file is missing)" >&2; exit 1; }
 done
@@ -62,7 +62,7 @@ mkdir -p "$stage"
 ditto "out/pyi-dist/$name.app" "$app"
 mkdir -p "$res/bin/gpu" "$res/bin/lib" "$res/bin/vulkan" "$res/launcher"
 # The executables without debug information (out/ keeps it for crash reports).
-for exe in spartanport-probe spartanport-gpu-capabilities; do
+for exe in ps4mac_runtime spartanport-gpu-capabilities; do
     strip -S -o "$res/bin/$exe" "out/$exe"
 done
 strip -S -o "$res/bin/gpu/libspartanportgpu.dylib" out/gpu/libspartanportgpu.dylib

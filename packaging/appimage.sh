@@ -6,12 +6,12 @@
 # Data (generated files, saves, spartanport.ini): ~/.local/share/spartanport (SPARTAN_DATA_DIR).
 set -euo pipefail
 cd -- "$(dirname -- "$0")/.."
-[[ -f out/spartanport-probe && -f out/gpu/libspartanportgpu.so ]] || { echo 'Build first: bash build.sh' >&2; exit 1; }
+[[ -f out/ps4mac_runtime && -f out/gpu/libspartanportgpu.so ]] || { echo 'Build first: bash build.sh' >&2; exit 1; }
 root=$PWD
 # The libraries' store paths (RUNPATH entries and their closures come along).
 {
     echo '['
-    for elf in out/spartanport-probe out/gpu/libspartanportgpu.so; do
+    for elf in out/ps4mac_runtime out/gpu/libspartanportgpu.so; do
         readelf -d "$elf" | sed -n 's/.*\[\(.*\)\]/\1/p' | tr ':' '\n'
     done | grep -o '^/nix/store/[^/]*' | sort -u | grep -v -- '-nix-shell$' | sed 's/.*/  "&"/'
     echo ']'

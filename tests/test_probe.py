@@ -8,8 +8,8 @@ import sys
 import tempfile
 import unittest
 
-EXE = ROOT / 'out/spartanport-probe'
-HOST_EXE = ROOT / ('out/spartanport-probe' + ('.exe' if sys.platform == 'win32' else ''))
+EXE = ROOT / 'out/ps4mac_runtime'
+HOST_EXE = ROOT / ('out/ps4mac_runtime' + ('.exe' if sys.platform == 'win32' else ''))
 
 
 def package(code, relocs=(), names=(), capabilities=None):

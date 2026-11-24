@@ -54,7 +54,7 @@ class MacosPackageTest(unittest.TestCase):
             root = Path(directory)
             prefix = root / 'deps'
             runtime = root / 'bundle/bin'
-            for name in ('spartanport-probe', 'spartanport-gpu-capabilities',
+            for name in ('ps4mac_runtime', 'spartanport-gpu-capabilities',
                          'gpu/libspartanportgpu.dylib', 'vulkan/libvulkan_kosmickrisp.dylib'):
                 file = runtime / name
                 file.parent.mkdir(parents=True, exist_ok=True)
@@ -69,7 +69,7 @@ class MacosPackageTest(unittest.TestCase):
                     return 'x86_64\n'
                 file = Path(command[-1])
                 if command[1] == '-L':
-                    dependency = (str(prefix / 'lib/libSDL3.dylib') if file.name == 'spartanport-probe' else
+                    dependency = (str(prefix / 'lib/libSDL3.dylib') if file.name == 'ps4mac_runtime' else
                                   '@loader_path/libhelper.dylib' if file.name == 'libSDL3.dylib' else
                                   '/usr/lib/libSystem.B.dylib')
                     return f'{file}:\n\t{dependency} (compatibility version 1.0.0)\n'

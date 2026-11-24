@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Prepares the game image and starts spartanport-probe (Windows, Linux and macOS; run.sh wraps it on Linux
+"""Prepares the game image and starts ps4mac_runtime (Windows, Linux and macOS; run.sh wraps it on Linux
 and macOS).
 
 Environment variables (SPARTAN_GAME_DIR, SPARTAN_DATA_DIR, SPARTAN_PATCHES, SPARTAN_MODS_*,
-SPARTAN_USER_DIR, ...). Extra arguments go to spartanport-probe.
+SPARTAN_USER_DIR, ...). Extra arguments go to ps4mac_runtime.
 The in-game "Apply and restart" runs this script again through SPARTAN_RESTART_COMMAND;
 `--after PID` waits for the previous game process to end first (its GPU device and memory).
 """
@@ -77,7 +77,7 @@ def no_console():
 
 
 def parse_cpu_features(output):
-    """Instruction sets `spartanport-probe --cpu-features` reports missing ([] when complete)."""
+    """Instruction sets `ps4mac_runtime --cpu-features` reports missing ([] when complete)."""
     for line in output.splitlines():
         if line.startswith('CPU: missing '):
             return [name.strip() for name in line[len('CPU: missing '):].split(',') if name.strip()]
@@ -320,9 +320,9 @@ def main():
     if not env.get('SPARTAN_FSR411_DIR') and not (PORT / 'fsr4_411').is_dir() and (data / 'fsr4_411').is_dir():
         env['SPARTAN_FSR411_DIR'] = str(data / 'fsr4_411')
 
-    probe = Path(env['SPARTAN_PROBE']) if env.get('SPARTAN_PROBE') else find_executable('spartanport-probe' + EXE_SUFFIX)
+    probe = Path(env['SPARTAN_PROBE']) if env.get('SPARTAN_PROBE') else find_executable('ps4mac_runtime' + EXE_SUFFIX)
     if not probe or not probe.is_file():
-        fail(f'spartanport-probe{EXE_SUFFIX} not found: build it with build.sh or use a packaged build.')
+        fail(f'ps4mac_runtime{EXE_SUFFIX} not found: build it with build.sh or use a packaged build.')
     # macOS: the x86-64 probe runs under Rosetta 2, which executes AVX, F16C, BMI1, LZCNT and MOVBE
     # but reports them in CPUID only when asked. The Vulkan driver (KosmicKrisp) is listed by the
     # manifest build.sh writes next to the probe.

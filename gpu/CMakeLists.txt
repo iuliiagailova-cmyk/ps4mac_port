@@ -161,7 +161,7 @@ else()
     pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil libswscale libswresample)
     list(REMOVE_ITEM SHIM_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/shim/spartanport_png_imageio.cpp)
 endif()
-# Windows: a DLL cannot leave the runtime_* symbols for spartanport-probe.exe to resolve, so the
+# Windows: a DLL cannot leave the runtime_* symbols for ps4mac_runtime.exe to resolve, so the
 # library is static there and linked into the executable.
 if (WIN32)
     set(SPARTANGPU_KIND STATIC)
@@ -187,7 +187,7 @@ set_source_files_properties(shim/spartanport_overlay.cpp PROPERTIES
 target_include_directories(spartanportgpu PRIVATE shim shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include)
 target_compile_definitions(spartanportgpu PRIVATE BOOST_ASIO_STANDALONE NDEBUG)
 target_compile_options(spartanportgpu PRIVATE -Wno-deprecated-declarations -Wno-missing-field-initializers)
-# Runtime symbols (runtime_memory_*, runtime_process_*) resolve against spartanport-probe.
+# Runtime symbols (runtime_memory_*, runtime_process_*) resolve against ps4mac_runtime.
 if (APPLE)
     target_link_options(spartanportgpu PRIVATE -undefined dynamic_lookup)
 elseif (NOT WIN32)
@@ -228,16 +228,16 @@ if (WIN32)
     add_library(atrac9 STATIC ${SPARTAN_ATRAC9})
     target_compile_options(atrac9 PRIVATE -w)
     set_target_properties(atrac9 PROPERTIES C_STANDARD 99 INTERPROCEDURAL_OPTIMIZATION OFF)
-    add_executable(spartanport-probe ../src/probe.c ${SPARTAN_RUNTIME} ../src/compat_win.c ../src/cpu_check.c ../src/vulkan_smoke.c
+    add_executable(ps4mac_runtime ../src/probe.c ${SPARTAN_RUNTIME} ../src/compat_win.c ../src/cpu_check.c ../src/vulkan_smoke.c
         ../src/isa_rewrite.c ../src/isa_emulate.c
-        ../packaging/windows/spartanport-probe.rc)
-    set_target_properties(spartanport-probe PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
-    target_compile_options(spartanport-probe PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -Werror>)
-    target_include_directories(spartanport-probe PRIVATE .. ../src)
-    target_link_libraries(spartanport-probe PRIVATE spartanportgpu atrac9 onecore bcrypt ws2_32 -pthread)
+        ../packaging/windows/ps4mac_runtime.rc)
+    set_target_properties(ps4mac_runtime PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
+    target_compile_options(ps4mac_runtime PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -Werror>)
+    target_include_directories(ps4mac_runtime PRIVATE .. ../src)
+    target_link_libraries(ps4mac_runtime PRIVATE spartanportgpu atrac9 onecore bcrypt ws2_32 -pthread)
     # The PS4 range (64 GiB - 1 TiB) must stay free: no high-entropy ASLR for heaps and stacks.
     # The guest main thread runs on the process stack: 16 MiB, committed (no stack probes).
-    target_link_options(spartanport-probe PRIVATE -Wl,--disable-high-entropy-va "SHELL:-Xlinker --stack -Xlinker 16777216,16777216")
+    target_link_options(ps4mac_runtime PRIVATE -Wl,--disable-high-entropy-va "SHELL:-Xlinker --stack -Xlinker 16777216,16777216")
     # spartanport: runtime unit tests (ninja -C out/gpu mp3-test videodec-test services-test).
     add_executable(mp3-test EXCLUDE_FROM_ALL ../tests/test_mp3.c ../src/runtime_mp3.c ../src/compat_win.c)
     add_executable(videodec-test EXCLUDE_FROM_ALL ../tests/test_videodec.c ../src/compat_win.c)

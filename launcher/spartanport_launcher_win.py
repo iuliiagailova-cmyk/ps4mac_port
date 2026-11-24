@@ -497,8 +497,8 @@ CONTROL_DEVICES = (('keyboard', 'Keyboard & mouse'), ('gamepad', 'Gamepad'))
 
 
 def connected_gamepad():
-    """Whether spartanport-probe sees a gamepad now; None when the probe is missing or fails."""
-    name = 'spartanport-probe.exe' if WINDOWS else 'spartanport-probe'
+    """Whether ps4mac_runtime sees a gamepad now; None when the probe is missing or fails."""
+    name = 'ps4mac_runtime.exe' if WINDOWS else 'ps4mac_runtime'
     probe = next((p for p in (PORT_DIR / 'bin' / name, PORT_DIR / 'out' / name) if p.is_file()), None)
     if not probe:
         return None
@@ -3328,7 +3328,7 @@ class Launcher:
 
 
 class GameJob:
-    """A Windows job holding run.py and everything it starts: spartanport-probe.exe and the launches made
+    """A Windows job holding run.py and everything it starts: ps4mac_runtime.exe and the launches made
     by the in-game restart (no longer descendants of the first process)."""
 
     def __init__(self, process):

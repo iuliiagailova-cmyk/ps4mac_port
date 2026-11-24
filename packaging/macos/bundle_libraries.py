@@ -53,7 +53,7 @@ def relocate(root, prefix):
     root = Path(root)
     lib = root / 'lib'
     lib.mkdir(exist_ok=True)
-    queue = [root / 'spartanport-probe', root / 'spartanport-gpu-capabilities',
+    queue = [root / 'ps4mac_runtime', root / 'spartanport-gpu-capabilities',
              root / 'gpu/libspartanportgpu.dylib', root / 'vulkan/libvulkan_kosmickrisp.dylib']
     fingerprints = {}
     originals = {}

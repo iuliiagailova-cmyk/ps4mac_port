@@ -62,7 +62,7 @@ Problems
   Do not rename shadPS4's param.sfo to param.bin; the formats differ.
   The save dialog displays at most 32 entries. If the imported slot is missing, test
   with a separate Saves folder containing only that slot; keep the original saves.
-- RTSS/Afterburner and ReShade must target bin\spartanport-probe.exe, not the launcher.
+- RTSS/Afterburner and ReShade must target bin\ps4mac_runtime.exe, not the launcher.
   Select Vulkan in the ReShade installer. Report the overlay versions if it still fails.
 - Black screen at start: use the latest release, which includes the startup deadlock patch.
   If it persists, report the GPU, driver, game build and Advanced -> Log output. Clearing the

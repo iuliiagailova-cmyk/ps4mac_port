@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
 // spartanport: NVIDIA DLSS Super Resolution through the optional spartanport_dlss.dll bridge (gpu/
-// dlss_bridge, MIT), loaded at run time from next to spartanport-probe.exe together with NVIDIA's
+// dlss_bridge, MIT), loaded at run time from next to ps4mac_runtime.exe together with NVIDIA's
 // nvngx_dlss.dll. The port itself contains no NVIDIA code; without the DLLs, on other GPUs or
 // with SPARTAN_DLSS=0 nothing changes. Adapted from IFreemz/shadPS4-Bloodborne-DLSS-FSR
 // (vk_dlss_ngx).

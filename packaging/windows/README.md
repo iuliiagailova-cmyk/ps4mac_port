@@ -24,7 +24,7 @@ Then, in the repository, build with MSYS2 CLANG64:
 
 ```bash
 git submodule update --init --recursive
-bash build.sh                      # out/spartanport-probe.exe, out/spartanport-gpu-capabilities.exe
+bash build.sh                      # out/ps4mac_runtime.exe, out/spartanport-gpu-capabilities.exe
 bash packaging/windows/package.sh  # dist/spartanport-windows/ and .zip: SpartanPort.exe + DLLs
 ```
 
@@ -67,7 +67,7 @@ for differences between published packages and current source builds, including 
 The launcher texts are written in English with the Russian beside them; the other languages
 are in `launcher/spartanport_lang.py` (one list per language in the order of `KEYS`; a missing or
 empty text falls back to English). The icon (`launcher/spartanport.ico`/`.png`) is made from the
-SP monogram (`packaging/icon/monogram.png`) by `packaging/windows/make_icon.py` and built into `SpartanPort.exe`, `spartanport-probe.exe` (the game
+SP monogram (`packaging/icon/monogram.png`) by `packaging/windows/make_icon.py` and built into `SpartanPort.exe`, `ps4mac_runtime.exe` (the game
 window) and `spartanport-gpu-capabilities.exe`.
 
 ## What is different from Linux
@@ -80,7 +80,7 @@ window) and `spartanport-gpu-capabilities.exe`.
 | SIGSEGV handler, `sigsetjmp` recovery | Vectored exception handler; `spartanport_setjmp`/`spartanport_longjmp` (`src/compat_win.c`) restore all Win64 callee-saved registers without SEH unwinding (guest frames have no unwind data; clang's `__builtin_longjmp` restores a wrong frame pointer on Win64). |
 | Guest thread stacks from `runtime_low_map` | Windows allocates them, fully committed (`pthread_attr_setstacksize`): guest code has no stack probes and would skip the guard page. The main thread stack is 16 MiB committed. |
 | glibc `nanosleep`, monotonic condition variables | High-resolution waitable timers (`compat_sleep_ns`; winpthreads' sleep rounds to 15.6 ms); semaphore deadlines use `CLOCK_REALTIME` (winpthreads rejects monotonic condition variables). |
-| `libspartanportgpu.so` | `libspartanportgpu.a`, linked into `spartanport-probe.exe` by CMake (`gpu/CMakeLists.txt`), with a manifest for UTF-8 paths and long paths. |
+| `libspartanportgpu.so` | `libspartanportgpu.a`, linked into `ps4mac_runtime.exe` by CMake (`gpu/CMakeLists.txt`), with a manifest for UTF-8 paths and long paths. |
 | `execlp bash run.sh` (in-game restart) | `run.py` puts its command line in `SPARTAN_RESTART_COMMAND`; the new launch waits for the old process (`--after PID`). The launcher keeps the game in a job object. |
 | Mod overlay with symlinks | Symlinks when allowed (Developer Mode), else junctions for folders and hard links for files. On a network share (SMB), which refuses junctions too, folders are mirrored with hard links so the game still reads real files through the view. |
 

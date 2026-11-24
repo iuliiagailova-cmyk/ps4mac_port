@@ -756,7 +756,7 @@ class PadStyleTest(unittest.TestCase):
         self.assertEqual(list(launcher.PAD_STYLES), ['playstation', 'xbox', 'nintendo'])
 
     def test_connected_gamepad_skips_a_probe_without_its_dlls(self):
-        on_disk = lambda path: path.name in ('spartanport-probe.exe', 'spartanport-probe')  # no SDL3.dll anywhere
+        on_disk = lambda path: path.name in ('ps4mac_runtime.exe', 'ps4mac_runtime')  # no SDL3.dll anywhere
         with mock.patch.object(launcher, 'WINDOWS', True), \
                 mock.patch.object(launcher.Path, 'is_file', on_disk), \
                 mock.patch.object(launcher.subprocess, 'run') as run:

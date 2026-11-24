@@ -7,7 +7,7 @@ on run
 	set logPath to portDir & "/out/launcher-app.log"
 	set shellEnv to "export PATH=/opt/homebrew/bin:/usr/local/bin:$PATH; cd " & quoted form of portDir & "; "
 
-	if (do shell script "pgrep -f 'out/spartanport-probe' >/dev/null && echo yes || echo no") is "yes" then
+	if (do shell script "pgrep -f 'out/ps4mac_runtime' >/dev/null && echo yes || echo no") is "yes" then
 		display dialog "SpartanPort is already running." buttons {"OK"} default button "OK" with title "SpartanPort" with icon caution
 		return
 	end if
@@ -39,10 +39,10 @@ on run
 	-- Report a start that fails (the game window normally opens within ~15 s).
 	repeat 40 times
 		delay 1
-		if (do shell script "pgrep -f 'out/spartanport-probe' >/dev/null && echo yes || echo no") is "yes" then return
+		if (do shell script "pgrep -f 'out/ps4mac_runtime' >/dev/null && echo yes || echo no") is "yes" then return
 		if (do shell script "pgrep -f " & quoted form of (portDir & "/run.py") & " >/dev/null && echo yes || echo no") is "no" then exit repeat
 	end repeat
-	if (do shell script "pgrep -f 'out/spartanport-probe' >/dev/null && echo yes || echo no") is "no" then
+	if (do shell script "pgrep -f 'out/ps4mac_runtime' >/dev/null && echo yes || echo no") is "no" then
 		set tailText to do shell script "tail -n 12 " & quoted form of logPath & " 2>/dev/null || true"
 		display dialog "SpartanPort did not start." & return & return & tailText & return & return & "Full log: " & logPath buttons {"OK"} default button "OK" with title "SpartanPort" with icon stop
 	end if

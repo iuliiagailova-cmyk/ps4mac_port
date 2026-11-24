@@ -5,14 +5,14 @@
 # players need no Python. Needs: ldd, patchelf, curl (appimagetool), python-pyinstaller, tk, pillow, iced-x86.
 set -euo pipefail
 cd -- "$(dirname -- "$0")/../.."
-[[ -f out/spartanport-probe && -f out/gpu/libspartanportgpu.so ]] || { echo 'Build first: bash build.sh' >&2; exit 1; }
+[[ -f out/ps4mac_runtime && -f out/gpu/libspartanportgpu.so ]] || { echo 'Build first: bash build.sh' >&2; exit 1; }
 
 appdir=out/AppDir
 rm -rf "$appdir"
 share=$appdir/usr/share/spartanport
 mkdir -p "$share/bin/gpu" "$appdir/usr/lib"
 
-install -m755 out/spartanport-probe out/spartanport-gpu-capabilities "$share/bin/"
+install -m755 out/ps4mac_runtime out/spartanport-gpu-capabilities "$share/bin/"
 install -m755 out/gpu/libspartanportgpu.so "$share/bin/gpu/"
 cp run.py "$share/"
 cp -r scripts patches "$share/"
@@ -61,7 +61,7 @@ bundle() {
     done < <(ldd "$elf")
 }
 bundle out/gpu/libspartanportgpu.so
-bundle out/spartanport-probe
+bundle out/ps4mac_runtime
 # libstdc++/libgcc/libz come from the build host: the same glibc generation as the one that runs
 # the AppImage is assumed, and a newer libstdc++ than Mesa's is the safe direction.
 for name in libstdc++.so.6 libgcc_s.so.1; do

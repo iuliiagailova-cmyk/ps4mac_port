@@ -3,7 +3,7 @@ set -euo pipefail
 cd -- "$(dirname -- "$0")"
 mkdir -p out
 # Windows: MSYS2 CLANG64 (packages in packaging/windows/README.md). The GPU library is static
-# there and CMake links spartanport-probe.exe as well; no PGO (GCC-only flags), LTO off by default.
+# there and CMake links ps4mac_runtime.exe as well; no PGO (GCC-only flags), LTO off by default.
 case $(uname -s) in
 MINGW*|MSYS*)
     # shellcheck source=msys2-env.sh
@@ -23,12 +23,12 @@ MINGW*|MSYS*)
     cmake -S gpu -B out/gpu -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSPARTAN_PGO=off \
         -DSPARTAN_LTO="${SPARTAN_LTO:-OFF}" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ >/dev/null
     echo "GPU library and loader: LTO ${SPARTAN_LTO:-OFF}"
-    if ! ninja -C out/gpu spartanport-probe spartanport-gpu-capabilities spartanport-play > out/gpu-build.log 2>&1; then
+    if ! ninja -C out/gpu ps4mac_runtime spartanport-gpu-capabilities spartanport-play > out/gpu-build.log 2>&1; then
         grep -v '^\[' out/gpu-build.log | tail -40 >&2
         echo 'Build failed (full log: out/gpu-build.log)' >&2; exit 1
     fi
-    cp out/gpu/spartanport-probe.exe out/gpu/spartanport-gpu-capabilities.exe out/gpu/spartanport-play.exe out/
-    echo "Built $PWD/out/spartanport-probe.exe"
+    cp out/gpu/ps4mac_runtime.exe out/gpu/spartanport-gpu-capabilities.exe out/gpu/spartanport-play.exe out/
+    echo "Built $PWD/out/ps4mac_runtime.exe"
     exit 0
     ;;
 Darwin)
@@ -73,13 +73,13 @@ Darwin)
     "${CC[@]}" -std=c11 -O2 -g -Wall -Wextra -Werror -mgeneral-regs-only -c src/isa_emulate.c -o out/isa_emulate.o
     "${CC[@]}" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread "${includes[@]}" -I. -Isrc src/probe.c "${runtime[@]}" \
         src/cpu_check.c src/vulkan_smoke.c out/isa_emulate.o src/isa_rewrite.c out/libatrac9.a -lm "${gpu[@]}" \
-        "${libraries[@]}" -o out/spartanport-probe
+        "${libraries[@]}" -o out/ps4mac_runtime
     # The renderer finds the Vulkan driver (KosmicKrisp) through the ICD manifest next to the
     # executable (vk_platform.cpp).
     rm -f out/MoltenVK_icd.json
     sed "s|\"library_path\": *\"[^\"]*\"|\"library_path\": \"$deps/lib/libvulkan_kosmickrisp.dylib\"|" \
         "$deps/share/vulkan/icd.d/kosmickrisp_mesa_icd.json" > out/kosmickrisp_mesa_icd.json
-    echo "Built $PWD/out/spartanport-probe"
+    echo "Built $PWD/out/ps4mac_runtime"
     "${CC[@]}" -std=c11 -O2 -Wall -Wextra -Werror -Igpu/shadps4 "${includes[@]}" tools/gpu_capabilities.c "${libraries[@]}" \
         -o out/spartanport-gpu-capabilities
     if [[ ${1:-} == --test ]]; then
@@ -169,8 +169,8 @@ if [[ ! -f out/libatrac9.a || -n $(find third_party/LibAtrac9/C/src -newer out/l
 fi
 # isa_emulate runs inside guest code: no XMM/YMM.
 "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -mgeneral-regs-only -c src/isa_emulate.c -o out/isa_emulate.o
-"$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie "${includes[@]}" -I. -Isrc src/probe.c "${runtime[@]}" src/cpu_check.c src/vulkan_smoke.c out/isa_emulate.o src/isa_rewrite.c out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/spartanport-probe
-echo "Built $PWD/out/spartanport-probe"
+"$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie "${includes[@]}" -I. -Isrc src/probe.c "${runtime[@]}" src/cpu_check.c src/vulkan_smoke.c out/isa_emulate.o src/isa_rewrite.c out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/ps4mac_runtime
+echo "Built $PWD/out/ps4mac_runtime"
 # GPU check for run.sh (live_resolution=auto): links only the Vulkan loader.
 "$CC" -std=c11 -O2 -Wall -Wextra -Werror -Igpu/shadps4 tools/gpu_capabilities.c "${libraries[@]}" -o out/spartanport-gpu-capabilities
 if [[ ${1:-} == --test ]]; then

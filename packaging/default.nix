@@ -15,7 +15,7 @@ let
   assetDirs = [ "scripts" "patches" "fsr4_shaders" "launcher" ] ++ lib.optional fsr411 "fsr4_411";
   # Only what the package needs (the tree also holds builds, profiles and captures).
   wanted = [
-    "run.sh" "out" "out/spartanport-probe" "out/spartanport-gpu-capabilities" "out/gpu" "out/gpu/libspartanportgpu.so"
+    "run.sh" "out" "out/ps4mac_runtime" "out/spartanport-gpu-capabilities" "out/gpu" "out/gpu/libspartanportgpu.so"
   ] ++ assetDirs;
   src = builtins.path {
     name = "spartanport-src";
@@ -95,7 +95,7 @@ pkgs.stdenv.mkDerivation {
     PY
       cp -r fsr4_411 $d/
     fi
-    install -m755 out/spartanport-probe $d/bin/spartanport-probe
+    install -m755 out/ps4mac_runtime $d/bin/ps4mac_runtime
     install -m755 out/spartanport-gpu-capabilities $d/bin/spartanport-gpu-capabilities
     install -Dm755 out/gpu/libspartanportgpu.so $d/bin/gpu/libspartanportgpu.so
     runHook postInstall

@@ -22,7 +22,8 @@ MARKER = 'legacy-migrated'
 DATA_SKIP = ('user/cache', 'out')
 # Old binaries an update leaves behind, with the file that replaced each one.
 LEFTOVERS = {
-    f'bin/{LEGACY_NAME}-probe.exe': f'bin/{NEW_NAME}-probe.exe',
+    f'bin/{LEGACY_NAME}-probe.exe': 'bin/ps4mac_runtime.exe',
+    f'bin/{NEW_NAME}-probe.exe': 'bin/ps4mac_runtime.exe',  # the runtime's name until 24.11.2026
     f'bin/{LEGACY_NAME}-gpu-capabilities.exe': f'bin/{NEW_NAME}-gpu-capabilities.exe',
     f'launcher/{LEGACY_NAME}.ico': f'launcher/{NEW_NAME}.ico',
     f'launcher/{LEGACY_NAME}.png': f'launcher/{NEW_NAME}.png',
