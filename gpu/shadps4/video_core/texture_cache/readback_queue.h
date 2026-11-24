@@ -16,13 +16,15 @@ public:
         Payload payload;
         bool valid = true;
         bool watched = true; ///< still protects its pages (see ReleaseOutside)
+        bool stale = false;  ///< watched for writes only (stale readbacks when it was queued)
     };
     bool CanFit(std::uint64_t size) const {
         return entries.size() < 64 && size <= MaxBytes && bytes <= MaxBytes - size;
     }
-    void Push(std::uint64_t address, std::uint64_t size, std::uint64_t tick, Payload payload) {
+    void Push(std::uint64_t address, std::uint64_t size, std::uint64_t tick, Payload payload,
+              bool stale = false) {
         assert(CanFit(size));
-        entries.push_back({address, size, tick, std::move(payload)});
+        entries.push_back({address, size, tick, std::move(payload), true, true, stale});
         bytes += size;
     }
     std::uint64_t RequiredTick(std::uint64_t address, std::uint64_t size) const {

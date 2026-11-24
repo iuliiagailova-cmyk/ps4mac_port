@@ -264,6 +264,31 @@ int runtime_bridge_fault(uintptr_t address, int is_write) {
             lat_event('T', mach_thread_self() == game_thread_port);
         }
     }
+    /* Diagnostic (SPARTAN_FAULT_RIPS=<lo>-<hi>, hex): each new guest instruction whose read fault lands
+     * in that range is printed once, with up to 6 image return addresses from its stack. */
+    static uint64_t rips_lo = 1, rips_hi;
+    if (rips_lo == 1) {
+        const char *env = getenv("SPARTAN_FAULT_RIPS"); char *e;
+        rips_lo = env ? strtoull(env, &e, 16) : 0;
+        rips_hi = env && *e == '-' ? strtoull(e + 1, NULL, 16) : 0;
+    }
+    if (!is_write && fault_uc && address >= rips_lo && address < rips_hi) {
+        static uint64_t seen[256]; static int seen_n;
+        const uint64_t rip = fault_uc->uc_mcontext->__ss.__rip;
+        int k = 0;
+        while (k < seen_n && seen[k] != rip) ++k;
+        if (k == seen_n && seen_n < 256) {
+            seen[seen_n++] = rip;
+            const uint64_t *sp = (const uint64_t *)(uintptr_t)fault_uc->uc_mcontext->__ss.__rsp;
+            char line[400]; int len = snprintf(line, sizeof line, "Fault rip %#llx addr %#llx rbx %#llx rsi %#llx rdi %#llx stack",
+                (unsigned long long)rip, (unsigned long long)address, (unsigned long long)fault_uc->uc_mcontext->__ss.__rbx,
+                (unsigned long long)fault_uc->uc_mcontext->__ss.__rsi, (unsigned long long)fault_uc->uc_mcontext->__ss.__rdi);
+            for (int j = 0, found = 0; j < 256 && found < 6 && len < 360; ++j)
+                if (sp[j] >= UINT64_C(0x8000000000) && sp[j] < UINT64_C(0x8005000000)) {
+                    len += snprintf(line + len, sizeof line - (size_t)len, " %#llx", (unsigned long long)sp[j]); ++found; }
+            fprintf(stderr, "%s\n", line);
+        }
+    }
     const int result = block->fault_result[sequence % 256];
     if (result == 2 && can_store) {
         /* The service left the store to us: the page stays protected, the GPU's bytes on it too. */

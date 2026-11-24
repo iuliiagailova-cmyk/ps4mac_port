@@ -3,6 +3,8 @@
 
 #include "spartanport_trace.h"
 #include <filesystem>
+#include <thread>
+#include <atomic>
 #include <xxhash.h>
 #include "video_core/amdgpu/liverpool.h"
 
@@ -43,7 +45,7 @@ TextureCache::TextureCache(const Vulkan::Instance& instance_, Vulkan::Scheduler&
 
     std::printf("GPU: deferred image readback %s (64 copies, 64 MiB pending limit)%s\n",
                 deferred_readbacks ? "enabled" : "disabled",
-                stale_readbacks ? "; CPU reads use the previous frame's copy" : "");
+                StaleReadbacks() ? "; CPU reads use the previous frame's copy" : "");
 
     u32 max_samplers = instance.GetMaxSamplerAllocationCount();
     trigger_gc_samplers = max_samplers * 3 / 4;
@@ -81,9 +83,41 @@ TextureCache::~TextureCache() {
     }
 }
 
+bool TextureCache::StaleReadbacks() const {
+    static std::atomic<int> mode{[] {
+        const char* value = std::getenv("SPARTAN_STALE_READBACK");
+        return value && value[0] == '1' ? 1 : 0;
+    }()};
+    static const bool watcher = [] {
+        const char* path = std::getenv("SPARTAN_STALE_READBACK_FILE");
+        if (!path || !*path) return false;
+        std::thread([file = std::string(path)] {
+            int last = -1;
+            for (;;) {
+                if (std::FILE* f = std::fopen(file.c_str(), "r")) {
+                    const int c = std::fgetc(f);
+                    std::fclose(f);
+                    if (c == '0' || c == '1') {
+                        mode.store(c - '0', std::memory_order_relaxed);
+                        if (c - '0' != last) {
+                            std::printf("Readback: stale CPU reads %s (live switch)\n", c == '1' ? "on" : "off");
+                            std::fflush(stdout);
+                            last = c - '0';
+                        }
+                    }
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            }
+        }).detach();
+        return true;
+    }();
+    (void)watcher;
+    return deferred_readbacks && mode.load(std::memory_order_relaxed) != 0;
+}
+
 template <bool track>
-void TextureCache::WatchReadback(VAddr address, u64 size) {
-    if (stale_readbacks) {
+void TextureCache::WatchReadback(VAddr address, u64 size, bool stale) {
+    if (stale) {
         tracker.UpdatePageWatchers<track, false>(address, size);
     } else {
         tracker.UpdatePageWatchers<track, true>(address, size);
@@ -112,7 +146,7 @@ void TextureCache::RetireReadbacks() {
                 entry.payload.Invalidate();
                 Core::Memory::Instance()->TryWriteBacking(std::bit_cast<u8*>(entry.address),
                     entry.payload.mapped, entry.size);
-                if (entry.watched) WatchReadback<false>(entry.address, entry.size);
+                if (entry.watched) WatchReadback<false>(entry.address, entry.size, entry.stale);
                 ++readbacks_completed;
             }
             runtime.GetStagingPool().FreeDeferred(entry.payload);
@@ -128,9 +162,9 @@ bool TextureCache::ResolveReadbacks(VAddr address, u64 size, bool assume_locks,
         // Stale mode, byte rule: SpartanPort writes every frame to the page that holds a
         // 1x1 exposure copy, but not to its bytes. That write need not wait for the GPU: the
         // copy only stops protecting its page and is still published when the GPU is done.
-        if (stale_readbacks && source == ReadbackSource::CpuWrite) {
+        if (StaleReadbacks() && source == ReadbackSource::CpuWrite) {
             readbacks_released += pending_readbacks.ReleaseOutside(address, size, 64_KB,
-                [this](auto& entry) { WatchReadback<false>(entry.address, entry.size); });
+                [this](auto& entry) { WatchReadback<false>(entry.address, entry.size, entry.stale); });
         }
         if (!pending_readbacks.RequiredTick(address, size)) return false;
     }
@@ -188,7 +222,7 @@ static bool ReadbackDiag() {
 
 void TextureCache::DiagAddress(VAddr address) {
     std::printf("Diag %#llx: deferred readbacks %d, stale %d\n", (unsigned long long)address,
-                int(deferred_readbacks), int(stale_readbacks));
+                int(deferred_readbacks), int(StaleReadbacks()));
     ForEachImageInRegion(address, 4, [&](ImageId id, Image& image) {
         bool queued = false;
         {
@@ -212,7 +246,7 @@ void TextureCache::CancelReadbacks(VAddr address, u64 size) {
     if (!deferred_readbacks) return;
     std::scoped_lock lock{readback_mutex};
     pending_readbacks.Cancel(address, size, [this, address, size](auto& entry) {
-        if (entry.watched) WatchReadback<false>(entry.address, entry.size);
+        if (entry.watched) WatchReadback<false>(entry.address, entry.size, entry.stale);
         ++readbacks_canceled;
         if (ReadbackDiag()) {
             std::printf("Readback diag: canceled %#llx+%llu (by %#llx+%llu)\n",
@@ -322,7 +356,8 @@ void TextureCache::ProcessDownloadImages() {
                         std::bit_cast<u8*>(copy->guest_address), copy->staging.mapped, copy->size);
                     runtime.GetStagingPool().FreeDeferred(copy->staging);
                 } else {
-                    WatchReadback<true>(copy->guest_address, copy->size);
+                    const bool stale = StaleReadbacks();
+                    WatchReadback<true>(copy->guest_address, copy->size, stale);
                     if (Vulkan::WaitDiagnostics::Enabled()) {
                         // Which images go back to RAM each frame (the report lists the busiest).
                         auto* slot = std::ranges::find(readback_images, image.info.guest_address,
@@ -340,7 +375,7 @@ void TextureCache::ProcessDownloadImages() {
                         SpartanTrace::Mark("watched readback queued", scheduler.CurrentTick());
                     }
                     pending_readbacks.Push(copy->guest_address, copy->size,
-                        scheduler.CurrentTick(), copy->staging);
+                        scheduler.CurrentTick(), copy->staging, stale);
                     has_pending_readbacks.store(true, std::memory_order_release);
                     // RnCPort: publish the copy as soon as the GPU is past it. Stale reads
                     // otherwise saw new data only at the next access through the GPU layer: a
@@ -379,7 +414,7 @@ void TextureCache::ProcessDownloadImages() {
                 readbacks_queued = readbacks_completed = readbacks_waited = readbacks_canceled = 0;
                 readbacks_peak_bytes = pending_readbacks.Bytes();
                 readback_sources.Report(stdout);
-                if (stale_readbacks) {
+                if (StaleReadbacks()) {
                     std::printf("Readback byte rule: %llu CPU writes went on without waiting\n",
                                 static_cast<unsigned long long>(readbacks_released));
                     readbacks_released = 0;

@@ -481,12 +481,12 @@ private:
     /// spartanport: SPARTAN_STALE_READBACK=1 (needs deferred readbacks). A pending copy only blocks CPU
     /// writes: CPU reads see the version the GPU published last (one frame late) instead of
     /// waiting for the GPU. Writes still wait, so no byte is lost.
-    const bool stale_readbacks = deferred_readbacks && [] {
-        const char* value = std::getenv("SPARTAN_STALE_READBACK");
-        return value && value[0] == '1';
-    }();
+    /// ps4mac_port: SPARTAN_STALE_READBACK_FILE=<file> switches the mode live (the file holds 1 or
+    /// 0, read every 250 ms; diagnostics, e.g. a flicker the player is looking at). Each queued
+    /// copy keeps the mode it was watched in.
+    bool StaleReadbacks() const;
     template <bool track>
-    void WatchReadback(VAddr address, u64 size);
+    void WatchReadback(VAddr address, u64 size, bool stale);
     struct ReadbackImageStat {
         VAddr address;
         u32 width, height, bits, copies, cpu_accesses;
