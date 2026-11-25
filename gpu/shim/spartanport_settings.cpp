@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "spartanport_settings.h"
-#include "spartanport_orbs.h"
 #include "spartanport_graphics.h"
 
 #include <algorithm>
@@ -56,14 +55,6 @@ void Set(Values& v, const std::string& key, const std::string& value) {
     if (key == "menu_tab") {
         v.menu_tab = i >= 0 && i <= 3 ? i : 0;
         return;
-    }
-    const char* cheat_keys[] = {"cheat_health", "cheat_magic", "cheat_item", "cheat_rage", "cheat_orbs",
-                                "cheat_very_hard", "cheat_double_jumps"};
-    for (unsigned cheat = 0; cheat < SPARTAN_CHEAT_COUNT; ++cheat) {
-        if (key == cheat_keys[cheat]) {
-            v.cheats[cheat] = i != 0;
-            return;
-        }
     }
     if (key == "upscaler") {
         for (int u = 0; u < UpscalerCount; ++u) {
@@ -133,22 +124,6 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.mouse_aim_sensitivity = value.empty() ? 100 : std::clamp(i, 10, 200);
     } else if (key == "restart_unconfirmed") {
         v.restart_unconfirmed = i != 0;
-    } else if (key == "enemy_health_bar") {
-        v.enemy_health_bar = i != 0;
-    } else if (key == "auto_qte") {
-        v.auto_qte = i != 0;
-    } else if (key == "red_orb_multiplier") {
-        v.red_orb_multiplier = SpartanOrbs::ClampMultiplier(f);
-    } else if (key == "damage_dealt") {
-        v.damage_dealt = SpartanOrbs::ClampMultiplier(f);
-    } else if (key == "damage_taken") {
-        v.damage_taken = SpartanOrbs::ClampMultiplier(f);
-    } else if (key == "green_orb_multiplier") {
-        v.green_orb_multiplier = SpartanOrbs::ClampMultiplier(f);
-    } else if (key == "blue_orb_multiplier") {
-        v.blue_orb_multiplier = SpartanOrbs::ClampMultiplier(f);
-    } else if (key == "gold_orb_multiplier") {
-        v.gold_orb_multiplier = SpartanOrbs::ClampMultiplier(f);
     } else if (key == "fsr4_auto_exposure") {
         v.fsr4_auto_exposure = i != 0;
     } else if (key == "fsr4_invert_jitter") {
@@ -205,7 +180,7 @@ void Load() {
         {"SPARTAN_ANISOTROPY", "anisotropy"},            {"SPARTAN_VIBRATION", "vibration"},
         {"SPARTAN_MOUSE_PROMPT_DISTANCE", "mouse_prompt_distance"}, {"SPARTAN_MOUSE_LOCK", "mouse_lock"},
         {"SPARTAN_MOUSE_AIM_STYLE", "mouse_aim_style"}, {"SPARTAN_MOUSE_AIM_SENSITIVITY", "mouse_aim_sensitivity"},
-        {"SPARTAN_AUTO_QTE", "auto_qte"},
+
     };
     for (const auto& [env, key] : env_keys) {
         if (const char* value = std::getenv(env); value && value[0]) {
@@ -336,19 +311,6 @@ void Save() {
                  v.debug_view.load(), int(v.show_fps.load()),
                  int(v.fsr4_auto_exposure.load()), int(v.fsr4_invert_jitter.load()));
     std::fprintf(file, "output_res=%dx%d\n", OutputWidths[v.output_res], OutputHeights[v.output_res]);
-    std::fprintf(file, "red_orb_multiplier=%.3f\n", v.red_orb_multiplier.load());
-    std::fprintf(file, "damage_dealt=%.3f\n", v.damage_dealt.load());
-    std::fprintf(file, "damage_taken=%.3f\n", v.damage_taken.load());
-    std::fprintf(file, "green_orb_multiplier=%.3f\n", v.green_orb_multiplier.load());
-    std::fprintf(file, "blue_orb_multiplier=%.3f\n", v.blue_orb_multiplier.load());
-    std::fprintf(file, "gold_orb_multiplier=%.3f\n", v.gold_orb_multiplier.load());
-    std::fprintf(file, "cheat_health=%d\ncheat_magic=%d\ncheat_item=%d\ncheat_rage=%d\ncheat_orbs=%d\n"
-                       "cheat_very_hard=%d\ncheat_double_jumps=%d\n",
-                 int(v.cheats[0].load()), int(v.cheats[1].load()), int(v.cheats[2].load()),
-                 int(v.cheats[3].load()), int(v.cheats[4].load()),
-                 int(v.cheats[5].load()), int(v.cheats[6].load()));
-    std::fprintf(file, "enemy_health_bar=%d\n", int(v.enemy_health_bar.load()));
-    std::fprintf(file, "auto_qte=%d\n", int(v.auto_qte.load()));
     std::fprintf(file,
                  "overlay_fps=%d\noverlay_frametime=%d\noverlay_upscaler=%d\noverlay_gpu=%d\n"
                  "overlay_cpu=%d\noverlay_ram=%d\noverlay_vram=%d\noverlay_scale=%d\noverlay_corner=%d\n"

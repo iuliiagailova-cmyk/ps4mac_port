@@ -492,8 +492,12 @@ static int mapped(Segment *segments, uint64_t count, uint64_t address, uint64_t 
 /* Game modules (games/<id>/module/runtime.c): code written for one game, compiled into the runtime
  * and run only for a game whose profile names the module (SPARTAN_GAME_MODULES). build.sh writes
  * out/game_modules.inc: each module's source, then the table of their install functions. */
+/* Each module defines <name>_install (before the image is protected: it may patch code) and
+ * <name>_mapped (after the image is protected and before guest code runs). */
 typedef void (*GameModuleInstall)(Segment *segments, uint64_t count, uint64_t size, const char *pause_menu, const char *app0);
+typedef void (*GameModuleMapped)(void);
 #include "game_modules.inc"
+static int game_module_on[sizeof(game_module_table) / sizeof(game_module_table[0])];
 
 /* G3PATCH2 (patches.py): the patches' image base, then byte writes at image offsets, applied
  * after relocation. A write may replace a whole base-relative pointer slot (60/90 FPS++ swap
@@ -907,8 +911,10 @@ int main(int argc, char **argv) {
     /* Game modules the game's profile names (SPARTAN_GAME_MODULES): God of War III's, for one. */
     const char *game_modules = getenv("SPARTAN_GAME_MODULES");
     for (size_t m = 0; gpu_enabled && game_modules && m < sizeof(game_module_table) / sizeof(game_module_table[0]); ++m)
-        if (game_module_table[m].name && strstr(game_modules, game_module_table[m].name))
+        if (game_module_table[m].name && strstr(game_modules, game_module_table[m].name)) {
+            game_module_on[m] = 1;
             game_module_table[m].install(segments, ns, size, pause_menu, app0);
+        }
 #ifdef _WIN32
     printf("Guest TCB loads redirected to the TEB TLS slot: %" PRIu64 "\n", patch_tcb_loads(segments, ns));
 #elif defined(__APPLE__)
@@ -937,7 +943,8 @@ int main(int argc, char **argv) {
     }
     if (!executable_entry) fail("entry is not executable");
     printf("Mapped %" PRIu64 " bytes, %" PRIu64 " segments; applied %" PRIu64 " relocations\n", size, ns, nr);
-    publish_engine_fps();
+    for (size_t m = 0; m < sizeof(game_module_table) / sizeof(game_module_table[0]); ++m)
+        if (game_module_on[m]) game_module_table[m].mapped();
     if (native_libc) {
         for (uint64_t m=0;m<module_count;++m) {
             int init_executable=0;

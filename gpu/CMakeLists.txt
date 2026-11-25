@@ -416,22 +416,10 @@ add_executable(upscaler-support-test EXCLUDE_FROM_ALL ../tests/test_upscaler_sup
     shim/spartanport_settings.cpp)
 target_include_directories(upscaler-support-test PRIVATE shim)
 target_compile_options(upscaler-support-test PRIVATE -UNDEBUG)
-add_executable(orb-multiplier-test EXCLUDE_FROM_ALL ../tests/test_orb_multiplier.cpp
-    shim/spartanport_orbs.cpp shim/spartanport_settings.cpp)
-target_include_directories(orb-multiplier-test PRIVATE shim)
-target_compile_options(orb-multiplier-test PRIVATE -UNDEBUG)
-add_executable(stat-multipliers-test EXCLUDE_FROM_ALL ../tests/test_stat_multipliers.cpp
-    shim/spartanport_settings.cpp)
-target_include_directories(stat-multipliers-test PRIVATE shim)
-target_compile_options(stat-multipliers-test PRIVATE -UNDEBUG)
 add_executable(perf-overlay-test EXCLUDE_FROM_ALL ../tests/test_perf_overlay.cpp
     shim/spartanport_settings.cpp)
 target_include_directories(perf-overlay-test PRIVATE shim)
 target_compile_options(perf-overlay-test PRIVATE -UNDEBUG)
-add_executable(cheat-hooks-test EXCLUDE_FROM_ALL ../tests/test_cheat_hooks.cpp)
-target_compile_options(cheat-hooks-test PRIVATE -UNDEBUG)
-add_executable(signatures-test EXCLUDE_FROM_ALL ../tests/test_signatures.cpp)
-target_compile_options(signatures-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 add_executable(readback-queue-test EXCLUDE_FROM_ALL ../tests/test_readback_queue.cpp)
 target_include_directories(readback-queue-test PRIVATE shadps4)
 target_compile_options(readback-queue-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
@@ -442,9 +430,6 @@ add_executable(graphics-settings-test EXCLUDE_FROM_ALL ../tests/test_graphics_se
     shim/spartanport_settings.cpp)
 target_include_directories(graphics-settings-test PRIVATE shim)
 target_compile_options(graphics-settings-test PRIVATE -UNDEBUG)
-add_executable(actor-hook-test EXCLUDE_FROM_ALL ../tests/test_actor_hook.cpp)
-target_include_directories(actor-hook-test PRIVATE shim)
-target_compile_options(actor-hook-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 add_executable(qte-hook-test EXCLUDE_FROM_ALL ../tests/test_qte_hook.cpp)
 target_compile_options(qte-hook-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 add_executable(menu-hook-test EXCLUDE_FROM_ALL ../tests/test_menu_hook.cpp)
@@ -462,8 +447,6 @@ add_executable(fsr4-bench EXCLUDE_FROM_ALL tools/fsr4_bench.cpp
 target_include_directories(fsr4-bench PRIVATE shadps4/video_core/renderer_vulkan/fsr411)
 target_link_libraries(fsr4-bench PRIVATE ffx-vulkan::fsr4-v07-vulkan ffx-vulkan::fsr4-v07-assets Vulkan::Vulkan)
 
-add_executable(cheat-hook-test ../tests/test_cheat_hook.cpp)
-target_compile_options(cheat-hook-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 
 # ps4mac_port: the native arm64 graphics service (service/), with the video core linked in. It
 # exports the runtime_* functions the library resolves at load (service/service_runtime.c), as

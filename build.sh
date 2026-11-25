@@ -77,12 +77,12 @@ Darwin)
     {
         echo '#define GAME_MODULE(name)'
         for m in "${modules[@]}"; do echo "#include \"$PWD/$m\""; done
-        echo 'static const struct { const char *name; GameModuleInstall install; } game_module_table[] = {'
+        echo 'static const struct { const char *name; GameModuleInstall install; GameModuleMapped mapped; } game_module_table[] = {'
         for m in "${modules[@]}"; do
             n=$(sed -n 's/^GAME_MODULE(\([a-z_0-9]*\)).*/\1/p' "$m")
-            [[ -n $n ]] && echo "    {\"$n\", ${n}_install},"
+            [[ -n $n ]] && echo "    {\"$n\", ${n}_install, ${n}_mapped},"
         done
-        echo '    {NULL, NULL}};'
+        echo '    {NULL, NULL, NULL}};'
     } > out/game_modules.inc
     module_includes=(); for m in "${modules[@]}"; do module_includes+=(-I"$(dirname "$m")"); done
     "${CC[@]}" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread "${includes[@]}" -I. -Isrc -Iout "${module_includes[@]}" src/probe.c "${runtime[@]}" \
