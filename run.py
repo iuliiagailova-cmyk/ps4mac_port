@@ -168,6 +168,10 @@ def glyph_mounts(env, probe, game, out):
     return [part for guest, path in mounts.items() for part in ('--mount', f'{guest}={path}')], style
 
 
+def game_module(env, name):
+    return name in env.get('SPARTAN_GAME_MODULES', '').split(',')
+
+
 def pause_menu_args(game, out, mounts):
     """Probe arguments for the copy of R_UI.WAD with the pause menu's Exit to Desktop row
     (scripts/pause_menu.py), made from the glyphs' copy when `mounts` has one. The probe mounts it
@@ -262,6 +266,9 @@ def main():
         print('Graphics: the last restart never reached the game; previous options restored', flush=True)
     # The profile's defaults: values given in the environment win, then spartanport.ini (for the
     # options it holds), then the profile.
+    # Game modules (code written for one game: God of War III's cheats, QTE and pause menu hooks)
+    # run only for a game whose profile names them; the runtime reads the list.
+    env['SPARTAN_GAME_MODULES'] = ','.join(port_profile.modules) if port_profile else ''
     profile_env = port_profile.env if port_profile else {}
     explicit = {k: env[k] for k in profile_env if k in env}
     env.update(graphics_options.environment(graphics))
@@ -438,11 +445,12 @@ def main():
         print(f'Engine frame rate: {min(int(graphics["engine_fps"]), engine_fps)} FPS, live up to {engine_fps}'
               + ('' if engine_fps > 60 or graphics['engine_fps'] == '60' else
                  ' (the frame rate patch was not found in this eboot.bin)'), flush=True)
-        glyph_args, glyph_style = glyph_mounts(env, probe, game, out)
+        # Controller glyphs patch God of War III's WAD files: its module only.
+        glyph_args, glyph_style = glyph_mounts(env, probe, game, out) if game_module(env, 'god_of_war') else ([], None)
         if glyph_style:  # the in-game menu names the buttons the same way
             env['SPARTAN_GLYPHS'] = glyph_style
             derived.append('SPARTAN_GLYPHS')
-        mount_args = glyph_args + pause_menu_args(game, out, glyph_args)
+        mount_args = glyph_args + (pause_menu_args(game, out, glyph_args) if game_module(env, 'god_of_war') else [])
         env['SPARTAN_DERIVED'] = ','.join(derived)
         # The guest memory pool is committed in full at start: a resolution patch above 1080p
         # can need more than 16 GB of RAM, and the game then closes when the page file cannot grow.

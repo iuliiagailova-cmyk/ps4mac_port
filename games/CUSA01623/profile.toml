@@ -5,6 +5,9 @@
 title = "God of War III Remastered"
 title_ids = ["CUSA01623", "CUSA01715", "CUSA01720"]  # tested: CUSA01623 v01.00 (US)
 match_title = "God of War"
+# God of War III's module in the core: cheats, orb multipliers, live engine frame rate, enemy health
+# bar, QTE answers and the pause menu's Exit to Desktop (SpartanPort's features).
+modules = ["god_of_war"]
 
 [patches]
 # SpartanPort's patch file (Texture Corruption Fix, resolution patches, ...). Its entries are tagged

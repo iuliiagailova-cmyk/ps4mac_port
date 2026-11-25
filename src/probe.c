@@ -1219,13 +1219,19 @@ int main(int argc, char **argv) {
         _exit(missing ? 1 : 0); /* no destructors: GPU threads are running */
     }
     if (patch_file) apply_patches(patch_file, segments, ns, relocs, nr);
-    if (gpu_enabled) install_orb_multiplier(segments, ns, size);
-    if (gpu_enabled) install_cheats(segments, ns, size);
-    if (gpu_enabled) find_engine_fps(segments, ns, size);
-    if (gpu_enabled) install_actor_watch(segments, ns, size);
-    if (gpu_enabled) install_stat_multipliers(segments, ns, size);
-    if (gpu_enabled) install_auto_qte_hooks(segments, ns, size, install_qte_hooks(segments, ns, size));
-    if (gpu_enabled && pause_menu && app0) install_menu_exit(segments, ns, size, pause_menu);
+    /* God of War III's module (cheats, orbs, live engine frame rate, enemy health bar, QTE and the
+     * pause menu's Exit to Desktop): only for a game whose profile names it (SPARTAN_GAME_MODULES). */
+    const char *game_modules = getenv("SPARTAN_GAME_MODULES");
+    const int god_of_war = gpu_enabled && game_modules && strstr(game_modules, "god_of_war");
+    if (god_of_war) {
+        install_orb_multiplier(segments, ns, size);
+        install_cheats(segments, ns, size);
+        find_engine_fps(segments, ns, size);
+        install_actor_watch(segments, ns, size);
+        install_stat_multipliers(segments, ns, size);
+        install_auto_qte_hooks(segments, ns, size, install_qte_hooks(segments, ns, size));
+        if (pause_menu && app0) install_menu_exit(segments, ns, size, pause_menu);
+    }
 #ifdef _WIN32
     printf("Guest TCB loads redirected to the TEB TLS slot: %" PRIu64 "\n", patch_tcb_loads(segments, ns));
 #elif defined(__APPLE__)
