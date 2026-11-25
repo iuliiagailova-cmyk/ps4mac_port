@@ -19,6 +19,7 @@
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/buffer_cache/memory_tracker.h"
+#include "video_core/page_manager.h"
 #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
@@ -58,7 +59,7 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
     : instance{instance_}, scheduler{scheduler_}, runtime{runtime_},
       staging_pool{runtime_.GetStagingPool()}, liverpool{liverpool_},
       memory{Core::Memory::Instance()}, texture_cache{texture_cache_},
-      memory_tracker{std::make_unique<MemoryTracker>(tracker)},
+      memory_tracker{std::make_unique<MemoryTracker>(tracker)}, page_manager{&tracker},
       stream_buffer{instance, scheduler, MemoryType::Stream, STREAM_BUFFER_SIZE},
       gds_buffer{instance, 0, GDS_BUFFER_SIZE, MemoryType::Stream, "GDS Buffer"},
       memory_semaphore{instance} {
@@ -1072,12 +1073,18 @@ void BufferCache::NoteGuestMap(VAddr address, u64 size) {
         host_changed.store(true, std::memory_order_release);
         return;
     }
-    // The mapping minus the skipped ranges inside it.
+    // The mapping minus the skipped ranges inside it and the chunks sampling demoted.
     std::vector<HostRegion> pieces{HostRegion{address, end}};
+    std::vector<SkipEntry> ranges;
     for (const SkipEntry& e : skip) {
-        if (!e.hi) {
-            continue;
+        if (e.hi) {
+            ranges.push_back(e);
         }
+    }
+    for (const HostRegion& d : host_demoted) {
+        ranges.push_back({d.start, d.end});
+    }
+    for (const SkipEntry& e : ranges) {
         std::vector<HostRegion> rest;
         for (const HostRegion& r : pieces) {
             if (e.hi <= r.start || r.end <= e.lo) {
@@ -1161,6 +1168,7 @@ const BufferCache::HostRegion* BufferCache::FindHostRegion(VAddr address, u64 si
 }
 
 std::pair<const Buffer*, u64> BufferCache::ObtainHostBuffer(VAddr device_addr, u64 size) {
+    SampleHostChunks();
     SyncHostRegions();
     bool straddles = false;
     const HostRegion* region = FindHostRegion(device_addr, size, &straddles);
@@ -1184,6 +1192,98 @@ std::pair<const Buffer*, u64> BufferCache::ObtainHostBuffer(VAddr device_addr, u
         }
     }
     return {it->second.get(), device_addr - start};
+}
+
+void BufferCache::SampleHostChunks() {
+    static const bool enabled = [] {
+        const char* env = std::getenv("SPARTAN_HOST_SAMPLE");
+        return !(env && env[0] == '0');
+    }();
+    const auto now = std::chrono::steady_clock::now();
+    if (!enabled || now < host_sample_tick) {
+        return;
+    }
+    host_sample_tick = now + std::chrono::milliseconds(50);
+    constexpr u64 Chunk = 1ull << HOST_CHUNK_SHIFT;
+    constexpr auto Window = std::chrono::milliseconds(150);
+    std::vector<VAddr> demote;
+    {
+        std::scoped_lock lock{host_sample_mutex};
+        // Windows that ended without a write.
+        for (auto& [chunk, sample] : host_samples) {
+            if (sample.watching && now - sample.armed >= Window) {
+                sample.watching = false;
+                page_manager->UpdatePageWatchers<false, false>(chunk, Chunk);
+                sample.history = u8(sample.history << 1);
+                sample.windows = u8(std::min(sample.windows + 1, 8));
+            }
+            if (sample.windows >= 4 && std::popcount(unsigned(sample.history & 0xf)) >= 3) {
+                demote.push_back(chunk);
+            }
+        }
+        for (const VAddr chunk : demote) {
+            host_samples.erase(chunk);
+        }
+        // A new round: every chunk a host buffer covers, every 2 s.
+        if (now >= host_sample_arm) {
+            host_sample_arm = now + std::chrono::seconds(2);
+            for (const auto& [key, buffer] : host_spans) {
+                for (VAddr chunk = buffer->CpuAddr(); chunk < buffer->CpuAddr() + buffer->SizeBytes(); chunk += Chunk) {
+                    HostSample& sample = host_samples[chunk];
+                    if (!sample.watching) {
+                        sample.watching = true;
+                        sample.armed = now;
+                        page_manager->UpdatePageWatchers<true, false>(chunk, Chunk);
+                    }
+                }
+            }
+        }
+    }
+    for (const VAddr chunk : demote) {
+        DemoteHostChunk(chunk);
+    }
+}
+
+bool BufferCache::OnHostSampleWrite(VAddr address) {
+    constexpr u64 Chunk = 1ull << HOST_CHUNK_SHIFT;
+    const VAddr chunk = Common::AlignDown(address, Chunk);
+    std::scoped_lock lock{host_sample_mutex};
+    const auto it = host_samples.find(chunk);
+    if (it == host_samples.end() || !it->second.watching) {
+        return false;
+    }
+    it->second.watching = false;
+    page_manager->UpdatePageWatchers<false, false>(chunk, Chunk);
+    it->second.history = u8(it->second.history << 1 | 1);
+    it->second.windows = u8(std::min(it->second.windows + 1, 8));
+    return true;
+}
+
+void BufferCache::DemoteHostChunk(VAddr chunk) {
+    constexpr u64 Chunk = 1ull << HOST_CHUNK_SHIFT;
+    const VAddr end = chunk + Chunk;
+    {
+        std::scoped_lock lock{host_mutex};
+        host_demoted.push_back({chunk, end});
+        std::vector<HostRegion> kept;
+        for (const HostRegion& r : host_regions_shared) {
+            if (end <= r.start || r.end <= chunk) {
+                kept.push_back(r);
+                continue;
+            }
+            if (r.start < chunk) {
+                kept.push_back({r.start, chunk});
+            }
+            if (end < r.end) {
+                kept.push_back({end, r.end});
+            }
+        }
+        host_regions_shared = std::move(kept);
+        host_dropped.push_back({chunk, end});
+    }
+    host_changed.store(true, std::memory_order_release);
+    std::printf("Host buffers: %#llx rewritten while the GPU reads it, copied from now on\n",
+                (unsigned long long)chunk);
 }
 
 void BufferCache::DownloadHost(VAddr device_addr, u64 size, const HostRegion& region) {

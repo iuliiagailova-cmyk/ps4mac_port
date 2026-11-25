@@ -3400,6 +3400,12 @@ void Rasterizer::GuestSync() {
 
 bool Rasterizer::OnWriteFault(VAddr addr, bool assume_locks) {
     DrainDrawPipe();
+    // ps4mac_port: a write to a host chunk under sampling (BufferCache::SampleHostChunks) is ours;
+    // other watchers of the page still get their invalidation.
+    if (buffer_cache.OnHostSampleWrite(addr)) {
+        InvalidateMemory(addr, 8, assume_locks);
+        return true;
+    }
     if (!InvalidateMemory(addr, 8, assume_locks)) {
         return false;
     }

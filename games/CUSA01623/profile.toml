@@ -16,9 +16,6 @@ file = "patches.xml"
 app_ver = "01.02"
 
 [env]
-# Two ranges the game rewrites while the GPU still reads them stay copied for the GPU (in place,
-# lightning turned the whole screen white for 2-4 s: the GPU read data the game had already
-# overwritten). 25.11.2026, first fight on Gaia, a frame every 2 s: in place 6 of 95 frames white;
-# these two copied 0 of 95 and 0 of 44 (the other region copied: 4 of 78, 5 of 95). Buffers over
-# the rest of guest memory stay in place.
-SPARTAN_HOST_BUFFERS_SKIP = "ec04000000-ec05000000,ec40000000-ec42000000"
+# Lightning used to turn the screen white (the GPU read two chunks the game rewrites every frame);
+# since 25.11.2026 the core finds such chunks itself (BufferCache::SampleHostChunks: 0xec04400000
+# and 0xec41000000 here) and copies them: 0 of 89 and 0 of 95 frames white, 24.1 / 24.2 FPS.

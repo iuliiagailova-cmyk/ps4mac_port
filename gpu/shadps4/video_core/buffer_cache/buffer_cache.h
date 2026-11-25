@@ -6,6 +6,7 @@
 #include "spartanport_copy.h"
 
 #include <atomic>
+#include <chrono>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -89,6 +90,9 @@ public:
 
     /// spartanport: a guest write fault at `device_addr` was handled; unprotect its neighbourhood.
     void ExtendWriteFault(VAddr device_addr);
+    /// ps4mac_port: a guest write to a host chunk under sampling (see SampleHostChunks); true when
+    /// it was one (the chunk is no longer watched). Called on a write fault, before invalidation.
+    bool OnHostSampleWrite(VAddr address);
 
     /// Flushes any GPU modified buffer in the logical page range back to CPU memory.
     void ReadMemory(VAddr device_addr, u64 size, bool is_write = false, bool assume_locks = false);
@@ -196,6 +200,25 @@ private:
     std::vector<HostRegion> host_regions;         ///< the cache owner's copy
     std::unordered_map<u64, std::shared_ptr<Buffer>> host_spans;
     u64 host_straddles = 0, host_created = 0;
+    /// ps4mac_port: host chunks the game rewrites while the GPU still reads them (a dynamic buffer
+    /// refilled every frame; the guest's fences are written when work is recorded, so it may run
+    /// ahead of the GPU) must stay copied, or the GPU reads the next frame's data (R&C: overexposed
+    /// frames; God of War III: lightning whitened the screen). Every 2 s each chunk a host buffer
+    /// covers is write-watched for 150 ms; written in 3 of its last 4 windows, it leaves the host
+    /// regions for good (the copying path, with tracking). SPARTAN_HOST_SAMPLE=0 turns it off.
+    struct HostSample {
+        std::chrono::steady_clock::time_point armed{};
+        bool watching = false;
+        u8 history = 0;  ///< one bit per window, newest lowest: written
+        u8 windows = 0;
+    };
+    std::mutex host_sample_mutex;
+    std::unordered_map<VAddr, HostSample> host_samples; ///< by chunk start, guarded by host_sample_mutex
+    std::vector<HostRegion> host_demoted;               ///< guarded by host_mutex
+    std::chrono::steady_clock::time_point host_sample_tick{}, host_sample_arm{};
+    PageManager* page_manager = nullptr;
+    void SampleHostChunks();
+    void DemoteHostChunk(VAddr chunk);
     void SyncHostRegions();
     const HostRegion* FindHostRegion(VAddr address, u64 size, bool* straddles = nullptr);
     std::pair<const Buffer*, u64> ObtainHostBuffer(VAddr device_addr, u64 size);
