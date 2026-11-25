@@ -25,6 +25,7 @@ class Profile:
     patch_app_ver: str = ''
     modules: tuple[str, ...] = ()  # game modules the core turns on for this game ("god_of_war")
     env: dict[str, str] = field(default_factory=dict)
+    graphics: dict[str, str] = field(default_factory=dict)  # defaults of the startup options (render_resolution)
     known_issues: dict[str, str] = field(default_factory=dict)
     test: dict = field(default_factory=dict)
 
@@ -49,6 +50,7 @@ def _load(path: Path) -> Profile:
         patch_app_ver=patches.get('app_ver', ''),
         modules=tuple(data.get('modules', ())),
         env={k: str(v) for k, v in data.get('env', {}).items()},
+        graphics={k: str(v) for k, v in data.get('graphics', {}).items()},
         known_issues=dict(data.get('known_issues', {})),
         test=dict(data.get('test', {})),
     )

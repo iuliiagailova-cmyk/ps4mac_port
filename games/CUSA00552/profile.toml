@@ -9,3 +9,8 @@ match_title = "The Last of Us"
 [patches]
 file = "patches.xml"               # "Bug Fix - Address Space Base": required on macOS
 app_ver = "01.00"
+
+[graphics]
+# Default render resolution until the player picks another in the in-game menu (Insert / R3+L2):
+# "Resolution Patch - 720p" (patches.xml), as R&C and God of War III are played on an 8 GB M1.
+render_resolution = "720p"

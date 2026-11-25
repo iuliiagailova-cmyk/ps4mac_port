@@ -17,6 +17,15 @@ class GraphicsOptionsTest(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_profile_default_resolution(self):
+        # A profile's default goes into the ini when the player has not chosen; a choice wins.
+        options, _ = g.prepare(self.ini, self.state, defaults={'render_resolution': '720p'})
+        self.assertEqual(options['render_resolution'], '720p')
+        self.assertIn('render_resolution=720p', self.ini.read_text())
+        g.write_keys(self.ini, {'render_resolution': 'native'})
+        options, _ = g.prepare(self.ini, self.state, defaults={'render_resolution': '720p'})
+        self.assertEqual(options['render_resolution'], 'native')
+
     def test_defaults_and_invalid_values(self):
         self.ini.write_text(
             'render_resolution=invalid\nengine_fps=90\nstale_readback=yes\n',

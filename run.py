@@ -261,7 +261,8 @@ def main():
     extra_resolutions = [s for s in patches.resolution_names(mod_patch_files) if s not in graphics_options.RESOLUTIONS]
     env['SPARTAN_EXTRA_RESOLUTIONS'] = ';'.join(extra_resolutions)
     derived.append('SPARTAN_EXTRA_RESOLUTIONS')
-    graphics, reverted = graphics_options.prepare(env['SPARTAN_CONFIG'], out / 'graphics_state.json', extra_resolutions)
+    graphics, reverted = graphics_options.prepare(env['SPARTAN_CONFIG'], out / 'graphics_state.json', extra_resolutions,
+                                                  port_profile.graphics if port_profile else None)
     if reverted:
         print('Graphics: the last restart never reached the game; previous options restored', flush=True)
     # The profile's defaults: values given in the environment win, then spartanport.ini (for the

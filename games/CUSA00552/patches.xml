@@ -9,7 +9,12 @@
      under Rosetta 2), so the counter starts at 0x8800000000 instead: the game's own range in
      ps4mac_port (0x88-0xec00000000, below the runtime's placements). The game takes 6 slots at
      start (0x8800000000-0x9fffffffff); its own limit check (slot + 8 GiB below 0xfc00000000)
-     stays. The site is found through the code that reads the counter. -->
+     stays. The site is found through the code that reads the counter.
+     "Resolution Patch - <name>": the render settings' default (image offset 0x9103a0) sets four
+     size pairs to 1920x1080 (fields +0x08, +0x18, +0x24, +0x38) and a tile grid of width/8 by
+     height/4 (+0x40, +0x44). The patch writes the same instructions with the new size, as the
+     engine's own mode switch at image offset 0x9104c0 does for its 1280x720, 1168x657 and
+     1024x600 modes. run.py picks the patch from render_resolution in spartanport.ini. -->
 <Patch>
     <TitleID>
         <ID>CUSA00552</ID>
@@ -19,5 +24,20 @@
             <Line Type="bytes" Address="0x019175a0" Value="0000000088000000" Target="next_area"/>
         </PatchList>
         <Target Name="next_area" Address="0x019175a0" Pattern="48 8b 1d ?? ?? ?? ?? 48 01 d8 48 89 05 ?? ?? ?? ?? 48 b8 00 00 00 00 02 00 00 00 48 01 d8 48 c1 e8 22 48 83 f8 3f 72 ?? e8 ?? ?? ?? ?? 48 85 c0 74 ?? 48 8d 3d ?? ?? ?? ?? 48 8d 35 ?? ?? ?? ?? 48 8d 15 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? 41 b8 20 00 00 00 45 31 c9 ff ?? cd 41 49 89 5e 08" At="3" Ref="1" Tail="0"/>
+    </Metadata>
+    <Metadata Title="The Last of Us" Name="Resolution Patch - 480p" Note="Renders the game at 854x480 instead of 1920x1080." Author="Iuliia Gailova" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x00d103b8" Value="c7470856030000c7470ce0010000c7471400000000c7471856030000c7471ce0010000c74720398ee33fc7472456030000c74728e0010000c7472c398ee33fc747100000803fc747406a000000c7474478000000c7476800007042c7476c00000000c74730000a0000c74734c0040000c7473856030000c7473ce0010000" Pattern="c7 87 84 00 00 00 00 00 00 00 c7 07 00 00 00 00 c6 47 05 00 c6 47 04 00" At="0x18"/>
+        </PatchList>
+    </Metadata>
+    <Metadata Title="The Last of Us" Name="Resolution Patch - 720p" Note="Renders the game at 1280x720 instead of 1920x1080." Author="Iuliia Gailova" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x00d103b8" Value="c7470800050000c7470cd0020000c7471400000000c7471800050000c7471cd0020000c74720398ee33fc7472400050000c74728d0020000c7472c398ee33fc747100000803fc74740a0000000c74744b4000000c7476800007042c7476c00000000c74730000a0000c74734c0040000c7473800050000c7473cd0020000" Pattern="c7 87 84 00 00 00 00 00 00 00 c7 07 00 00 00 00 c6 47 05 00 c6 47 04 00" At="0x18"/>
+        </PatchList>
+    </Metadata>
+    <Metadata Title="The Last of Us" Name="Resolution Patch - 900p" Note="Renders the game at 1600x900 instead of 1920x1080." Author="Iuliia Gailova" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x00d103b8" Value="c7470840060000c7470c84030000c7471400000000c7471840060000c7471c84030000c74720398ee33fc7472440060000c7472884030000c7472c398ee33fc747100000803fc74740c8000000c74744e1000000c7476800007042c7476c00000000c74730000a0000c74734c0040000c7473840060000c7473c84030000" Pattern="c7 87 84 00 00 00 00 00 00 00 c7 07 00 00 00 00 c6 47 05 00 c6 47 04 00" At="0x18"/>
+        </PatchList>
     </Metadata>
 </Patch>

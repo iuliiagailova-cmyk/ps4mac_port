@@ -130,10 +130,12 @@ def resolution_label(name, aspect=True):
     return label + (' (beta)' if name in BETA_RESOLUTIONS else '')
 
 
-def startup_options(ini, extra=()):
+def startup_options(ini, extra=(), defaults=None):
     """The startup options, normalized; unknown values fall back to the defaults. `extra`: the
-    resolutions of the enabled mods (a mod that is off leaves its resolution out: native)."""
-    options = {key: ini.get(key, value) for key, value in DEFAULTS.items()}
+    resolutions of the enabled mods (a mod that is off leaves its resolution out: native).
+    `defaults`: the game profile's own defaults ([graphics] in profile.toml), below the ini."""
+    defaults = {**DEFAULTS, **{k: v for k, v in (defaults or {}).items() if k in DEFAULTS}}
+    options = {key: ini.get(key, value) for key, value in defaults.items()}
     if options['render_resolution'] not in resolutions(extra):
         options['render_resolution'] = 'native'
     if options['engine_fps'] not in {str(f) for f in ENGINE_FPS}:
@@ -143,20 +145,26 @@ def startup_options(ini, extra=()):
     return options
 
 
-def prepare(config, state_path, extra=()):
+def prepare(config, state_path, extra=(), defaults=None):
     """(options, reverted): the startup options of this launch, restoring the last confirmed
     ones when the previous launch after a restart never confirmed its own."""
     ini = read_ini(config)
+    # The profile's defaults go into the file the in-game menu and the window read, unless the
+    # player has chosen a value already.
+    missing = {k: v for k, v in (defaults or {}).items() if k in DEFAULTS and k not in ini}
+    if missing:
+        write_keys(config, missing)
+        ini = read_ini(config)
     state = {}
     try:
         state = json.loads(Path(state_path).read_text(encoding='utf-8'))
     except (OSError, ValueError):
         pass
-    options = startup_options(ini, extra)
+    options = startup_options(ini, extra, defaults)
     reverted = False
     if ini.get('restart_unconfirmed') == '1':
         if state.get('attempt') and state.get('last_good'):
-            options = startup_options(state['last_good'], extra)
+            options = startup_options(state['last_good'], extra, defaults)
             write_keys(config, {**options, 'restart_unconfirmed': '0'})
             state['attempt'] = False
             reverted = True
