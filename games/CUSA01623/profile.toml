@@ -16,7 +16,9 @@ file = "patches.xml"
 app_ver = "01.02"
 
 [env]
-# Nothing of its own: the core's speed settings (run.py) apply. Measured 24.11.2026 (first fight
-# on Gaia, New Game, cutscenes skipped, M1 8 GB, 2 runs each): 1080p 13.6 / 13.7 FPS without
-# them, 14.7 / 15.0 with them; with the 720p resolution patch (in-game menu: render resolution)
-# 24.3 / 24.4. Frames checked.
+# Two ranges the game rewrites while the GPU still reads them stay copied for the GPU (in place,
+# lightning turned the whole screen white for 2-4 s: the GPU read data the game had already
+# overwritten). 25.11.2026, first fight on Gaia, a frame every 2 s: in place 6 of 95 frames white;
+# these two copied 0 of 95 and 0 of 44 (the other region copied: 4 of 78, 5 of 95). Buffers over
+# the rest of guest memory stay in place.
+SPARTAN_HOST_BUFFERS_SKIP = "ec04000000-ec05000000,ec40000000-ec42000000"

@@ -1041,23 +1041,61 @@ void BufferCache::NoteGuestMap(VAddr address, u64 size) {
         }
         return false;
     });
-    // SPARTAN_HOST_BUFFERS_SKIP=<hex start>,...: mappings left to the copying path (bisecting).
-    static const std::vector<VAddr> skip = [] {
-        std::vector<VAddr> list;
+    // SPARTAN_HOST_BUFFERS_SKIP=<entry>,...: guest memory left to the copying path, for a range the
+    // game rewrites while the GPU still reads it (in place, the GPU would read the new data). An
+    // entry is a mapping's start address (hex: the whole mapping) or a range <lo>-<hi> (hex: those
+    // bytes, rounded out to 16 KiB, of whichever mapping holds them).
+    struct SkipEntry {
+        VAddr lo, hi; // hi == 0: the mapping that starts at lo
+    };
+    static const std::vector<SkipEntry> skip = [] {
+        std::vector<SkipEntry> list;
         if (const char* env = std::getenv("SPARTAN_HOST_BUFFERS_SKIP")) {
             for (const char* p = env; *p;) {
                 char* next = nullptr;
-                list.push_back(std::strtoull(p, &next, 16));
+                const VAddr lo = std::strtoull(p, &next, 16);
+                VAddr hi = 0;
+                if (*next == '-') {
+                    hi = std::strtoull(next + 1, &next, 16);
+                }
+                if (next == p) {
+                    break;
+                }
+                list.push_back({lo & ~VAddr{16383}, hi ? (hi + 16383) & ~VAddr{16383} : 0});
                 p = (*next == ',') ? next + 1 : next;
-                if (next == p && *p == 0) break;
             }
         }
         return list;
     }();
-    if (size >= host_min_mapping && (address & 16383) == 0 && (size & 16383) == 0 &&
-        std::ranges::find(skip, address) == skip.end()) {
-        const auto at = std::ranges::lower_bound(host_regions_shared, address, {}, &HostRegion::start);
-        host_regions_shared.insert(at, HostRegion{address, end});
+    if (size < host_min_mapping || (address & 16383) != 0 || (size & 16383) != 0 ||
+        std::ranges::any_of(skip, [&](const SkipEntry& e) { return !e.hi && e.lo == address; })) {
+        host_changed.store(true, std::memory_order_release);
+        return;
+    }
+    // The mapping minus the skipped ranges inside it.
+    std::vector<HostRegion> pieces{HostRegion{address, end}};
+    for (const SkipEntry& e : skip) {
+        if (!e.hi) {
+            continue;
+        }
+        std::vector<HostRegion> rest;
+        for (const HostRegion& r : pieces) {
+            if (e.hi <= r.start || r.end <= e.lo) {
+                rest.push_back(r);
+                continue;
+            }
+            if (r.start < e.lo) {
+                rest.push_back(HostRegion{r.start, e.lo});
+            }
+            if (e.hi < r.end) {
+                rest.push_back(HostRegion{e.hi, r.end});
+            }
+        }
+        pieces = std::move(rest);
+    }
+    for (const HostRegion& r : pieces) {
+        const auto at = std::ranges::lower_bound(host_regions_shared, r.start, {}, &HostRegion::start);
+        host_regions_shared.insert(at, r);
     }
     host_changed.store(true, std::memory_order_release);
 }
