@@ -2,7 +2,7 @@
 // replaced instructions and resumes; function 0xfff goes to quit.
 #include <cassert>
 #include <cstdint>
-#include "../src/menu_hook.h"
+#include "../games/CUSA01623/module/menu_hook.h"
 #include <windows.h>
 
 // The stub ends with a jump to its resume address; here that is a `ret` back to the test.

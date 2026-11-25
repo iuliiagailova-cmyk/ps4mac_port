@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "../../src/cheat_hook.h"
+#include "../../games/CUSA01623/module/cheat_hook.h"
 
 #include <atomic>
 #include <cstdint>

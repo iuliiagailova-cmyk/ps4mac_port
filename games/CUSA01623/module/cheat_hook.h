@@ -3,7 +3,7 @@
 #define SPARTAN_CHEAT_HOOK_H
 #include <stdint.h>
 #include <string.h>
-#include "signature.h"
+#include "../../../src/signature.h"
 
 enum { SPARTAN_CHEAT_HEALTH, SPARTAN_CHEAT_MAGIC, SPARTAN_CHEAT_ITEM, SPARTAN_CHEAT_RAGE,
        SPARTAN_CHEAT_ORBS, SPARTAN_CHEAT_VERY_HARD, SPARTAN_CHEAT_DOUBLE_JUMPS, SPARTAN_CHEAT_COUNT };

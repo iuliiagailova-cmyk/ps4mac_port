@@ -71,7 +71,21 @@ Darwin)
     fi
     # isa_emulate runs inside guest code: no XMM/YMM.
     "${CC[@]}" -std=c11 -O2 -g -Wall -Wextra -Werror -mgeneral-regs-only -c src/isa_emulate.c -o out/isa_emulate.o
-    "${CC[@]}" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread "${includes[@]}" -I. -Isrc src/probe.c "${runtime[@]}" \
+    # Game modules (games/<id>/module/runtime.c, each ending with GAME_MODULE(<name>)): src/probe.c
+    # includes out/game_modules.inc, their sources and the table of their install functions.
+    modules=(); while IFS= read -r m; do modules+=("$m"); done < <(ls games/*/module/runtime.c 2>/dev/null)
+    {
+        echo '#define GAME_MODULE(name)'
+        for m in "${modules[@]}"; do echo "#include \"$PWD/$m\""; done
+        echo 'static const struct { const char *name; GameModuleInstall install; } game_module_table[] = {'
+        for m in "${modules[@]}"; do
+            n=$(sed -n 's/^GAME_MODULE(\([a-z_0-9]*\)).*/\1/p' "$m")
+            [[ -n $n ]] && echo "    {\"$n\", ${n}_install},"
+        done
+        echo '    {NULL, NULL}};'
+    } > out/game_modules.inc
+    module_includes=(); for m in "${modules[@]}"; do module_includes+=(-I"$(dirname "$m")"); done
+    "${CC[@]}" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread "${includes[@]}" -I. -Isrc -Iout "${module_includes[@]}" src/probe.c "${runtime[@]}" \
         src/cpu_check.c src/vulkan_smoke.c out/isa_emulate.o src/isa_rewrite.c out/libatrac9.a -lm "${gpu[@]}" \
         "${libraries[@]}" -o out/ps4mac_runtime
     # The renderer finds the Vulkan driver (KosmicKrisp) through the ICD manifest next to the
@@ -84,7 +98,7 @@ Darwin)
         -o out/spartanport-gpu-capabilities
     if [[ ${1:-} == --test ]]; then
         export ROSETTA_ADVERTISE_AVX=1
-        cc=("${CC[@]}" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc)
+        cc=("${CC[@]}" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc -Iout "${module_includes[@]}")
         "${cc[@]}" "${includes[@]}" tests/test_pad.c src/compat_mac.c "${libraries[@]}" -o out/pad-test
         "${cc[@]}" "${includes[@]}" tests/test_runtime.c "${runtime[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/runtime-test
         "${cc[@]}" tests/test_file_mods.c src/compat_mac.c -o out/file-mods-test

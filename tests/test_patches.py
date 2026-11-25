@@ -196,7 +196,7 @@ class SignatureTests(unittest.TestCase):
                 reference = int(line.get('Address'), 0)
                 shifts.setdefault(reference >> 16, set()).add(int(address, 0) - reference)
         self.assertTrue(all(len(s) == 1 for s in shifts.values()), shifts)
-        header = (ROOT / 'src/cheat_hook.h').read_text()
+        header = (ROOT / 'games/CUSA01623/module/cheat_hook.h').read_text()
         hooks = re.findall(r'\{(0x[0-9a-f]+),SPARTAN_CHEAT_\w+,\d+,\d+,\s*\{([^}]*)\},.*?\{"([^"]+)",(\d+)\}\}',
                            header, re.S)
         for name, (address, original) in known['cheats'].items():

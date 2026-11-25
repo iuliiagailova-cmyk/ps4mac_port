@@ -2,7 +2,7 @@
 #include <cmath>
 #include <limits>
 #include "spartanport_orbs.h"
-#include "../src/orb_hook.h"
+#include "../games/CUSA01623/module/orb_hook.h"
 #include <vector>
 #include <array>
 #include <cstdio>

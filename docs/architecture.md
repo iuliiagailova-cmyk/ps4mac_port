@@ -32,7 +32,7 @@
 
 - `run.py`: ветки по `CUSA01047` (режимы считывания, частота отправки), папка игры по умолчанию.
 - `scripts/patches.py`: таблица игр зашита в код (`GAMES = [...]`).
-- рантайм: хуки God of War (с 25.11.2026 включаются только для игры, чей профиль называет модуль `god_of_war` — `modules` в `profile.toml`, `SPARTAN_GAME_MODULES`; физически код ещё в ядре) (`orb_hook.h`, `qte_hook.h`, `actor_hook.h`, `damage_hook.h`, `menu_hook.h`, `cheat_hook.h`) подключены в `probe.c`;
+- рантайм: хуки God of War — **перенесены 25.11.2026** в модуль игры `games/CUSA01623/module/` (`runtime.c` и заголовки хуков); `build.sh` сам собирает `games/*/module/runtime.c` в `out/game_modules.inc`, а запускается модуль только для игры, чей профиль его называет (`modules = ["god_of_war"]`, `SPARTAN_GAME_MODULES`). Ещё в ядре: клавиатурные QTE в `runtime_pad.c`, сервисная часть (`spartanport_orbs/actors`, пункты читов в настройках и игровом меню) и `scripts/pause_menu.py`, `glyphs.py` (включаются тоже только модулем). Было: (`orb_hook.h`, `qte_hook.h`, `actor_hook.h`, `damage_hook.h`, `menu_hook.h`, `cheat_hook.h`) подключены в `probe.c`;
 - графика: временной апскейлер и «motion» привязаны к сцене God of War III; оверлей с настройками GoW.
 
 ## 3. Целевая архитектура

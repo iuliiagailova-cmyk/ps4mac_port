@@ -3,7 +3,7 @@
 #define SPARTAN_ORB_HOOK_H
 #include <stdint.h>
 #include <string.h>
-#include "signature.h"
+#include "../../../src/signature.h"
 
 /* The red orb setter (image offset 0x6a9f0 in the reference build) and its three callers that
  * add gains, found by signature in any build; each call must still target the setter. */

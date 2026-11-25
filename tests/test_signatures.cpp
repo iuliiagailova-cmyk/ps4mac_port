@@ -3,10 +3,10 @@
 #include <cassert>
 #include <cstdio>
 #include <vector>
-#include "../src/cheat_hook.h"
-#include "../src/actor_hook.h"
-#include "../src/damage_hook.h"
-#include "../src/orb_hook.h"
+#include "../games/CUSA01623/module/cheat_hook.h"
+#include "../games/CUSA01623/module/actor_hook.h"
+#include "../games/CUSA01623/module/damage_hook.h"
+#include "../games/CUSA01623/module/orb_hook.h"
 
 struct Site { const SpartanSignature* sig; uint64_t reference; };
 

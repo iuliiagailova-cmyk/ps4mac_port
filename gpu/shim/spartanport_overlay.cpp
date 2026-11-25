@@ -18,7 +18,7 @@
 #include "spartanport_actors.h"
 #include "spartanport_graphics.h"
 #include "spartanport_perf_stats.h"
-#include "../../src/actor_hook.h"
+#include "../../games/CUSA01623/module/actor_hook.h"
 
 extern SpartanActorSlot spartanport_actor_slots[2];
 extern "C" void runtime_restart(void); // src/probe.c: starts run.py again, ends this process

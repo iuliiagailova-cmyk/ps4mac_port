@@ -5,7 +5,7 @@
 #include <cstring>
 #include <initializer_list>
 #include <windows.h>
-#include "../src/cheat_hook.h"
+#include "../games/CUSA01623/module/cheat_hook.h"
 
 static int read_difficulty(void* entry, unsigned completed) {
     int result;

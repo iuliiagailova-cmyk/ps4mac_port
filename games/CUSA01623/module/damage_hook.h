@@ -3,7 +3,7 @@
 #define SPARTAN_DAMAGE_HOOK_H
 #include <stdint.h>
 #include <string.h>
-#include "signature.h"
+#include "../../../src/signature.h"
 
 /* CUSA01623 v01.02, image offset 0x503f3, inside the damage routine: the actor's health before
  * the hit is at [rbp-0x5c], the damage at [rbp-0x60]; the game then clamps the difference to

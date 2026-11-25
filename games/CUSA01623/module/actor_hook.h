@@ -3,7 +3,7 @@
 #define SPARTAN_ACTOR_HOOK_H
 #include <stdint.h>
 #include <string.h>
-#include "signature.h"
+#include "../../../src/signature.h"
 
 /* CUSA01623 v01.02, image offset 0x50417: the instruction after the damage routine stores an
  * actor's new health (vmovss [r13+0x1cc], xmm0 at 0x5040e, the infinite-health cheat's site).

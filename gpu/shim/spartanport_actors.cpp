@@ -2,7 +2,7 @@
 #include "spartanport_actors.h"
 #include "spartanport_settings.h"
 #include <cstdint>
-#include "../../src/actor_hook.h"
+#include "../../games/CUSA01623/module/actor_hook.h"
 
 alignas(64) SpartanActorSlot spartanport_actor_slots[2];
 

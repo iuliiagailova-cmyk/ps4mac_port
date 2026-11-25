@@ -7,8 +7,8 @@
 #include <sstream>
 #include <string>
 #include <vector>
-#include "../src/damage_hook.h"
-#include "../src/orb_hook.h"
+#include "../games/CUSA01623/module/damage_hook.h"
+#include "../games/CUSA01623/module/orb_hook.h"
 #include "spartanport_settings.h"
 #ifdef _WIN32
 #include <windows.h>

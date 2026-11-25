@@ -3,7 +3,7 @@
 #define SPARTAN_MENU_HOOK_H
 #include <stdint.h>
 #include <string.h>
-#include "signature.h"
+#include "../../../src/signature.h"
 
 /* CUSA01623 v01.02, image offset 0x1d5f0f: the menu script interpreter's builtin call (opcode
  * 0x13), right before the provider's vtable call. esi holds the function id (12 bits), eax the

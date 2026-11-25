@@ -10,7 +10,7 @@
 #include <iterator>
 #include <vector>
 #include <windows.h>
-#include "../src/qte_hook.h"
+#include "../games/CUSA01623/module/qte_hook.h"
 
 // The stubs replay the functions' first instructions, then jump here: undo them and return what
 // the game's own function would (0 from the rotation check: not finished yet). The other stubs

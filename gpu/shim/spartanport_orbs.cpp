@@ -3,7 +3,7 @@
 #include "spartanport_settings.h"
 #include <cstring>
 #include <cstdint>
-#include "../../src/cheat_hook.h"
+#include "../../games/CUSA01623/module/cheat_hook.h"
 
 extern "C" float __attribute__((sysv_abi)) spartanport_orbs_gain(void* player, float requested) {
     float balance;

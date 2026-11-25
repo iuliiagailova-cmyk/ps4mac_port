@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <windows.h>
-#include "../src/actor_hook.h"
+#include "../games/CUSA01623/module/actor_hook.h"
 #include "spartanport_actors.h"
 
 // The stub ends with a jump to its resume address; here that is a `ret` back to the test.

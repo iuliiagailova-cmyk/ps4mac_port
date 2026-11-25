@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-#include "signature.h"
+#include "../../../src/signature.h"
 
 /* The game's QTE prompts ("minigame buttons"). Offsets as found in a v01.02 build; builds are found
  * by signature. 0x12c670 starts a prompt: it stores the prompt type at +0x10 of a state block
