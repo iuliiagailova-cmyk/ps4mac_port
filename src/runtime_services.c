@@ -620,6 +620,34 @@ static ABI int32_t playgo_eta(int32_t handle,const uint16_t *ids,uint32_t count,
     *eta=0; return 0; /* everything is installed */
 }
 
+/* The Last of Us Remastered (25.11.2026): online, voice, keyboard, Remote Play, crash dumps and
+ * downloads are offline here, as the rest of this file. */
+static ABI int32_t voice_get_mute(uint32_t port, uint32_t *muted) { (void)port; if (muted) *muted=0; return 0; }
+static ABI int32_t voice_get_volume(uint32_t port, float *volume) { (void)port; if (volume) *volume=1.0f; return 0; }
+static ABI int32_t remoteplay_status(int32_t user, int32_t *status) { (void)user; if (status) *status=0; return 0; } /* disconnected */
+static ABI int32_t ime_unavailable(void) { return (int32_t)0x80BC0002; } /* SCE_IME_ERROR_BUSY-class: no keyboard */
+static ABI int32_t playgo_language_mask(int32_t handle, uint64_t *mask) {
+    if (handle!=playgo_handle || !handle) return PLAYGO_BAD_HANDLE;
+    if (!mask) return PLAYGO_BAD_POINTER;
+    *mask=~UINT64_C(0); return 0; /* every language is installed */
+}
+static ABI int32_t playgo_set_language_mask(int32_t handle, uint64_t mask) {
+    (void)mask; return handle==playgo_handle && handle ? 0 : PLAYGO_BAD_HANDLE;
+}
+static ABI int32_t playgo_get_todo(int32_t handle, void *list, uint32_t entries, uint32_t *count) {
+    (void)list; (void)entries;
+    if (handle!=playgo_handle || !handle) return PLAYGO_BAD_HANDLE;
+    if (!count) return PLAYGO_BAD_POINTER;
+    *count=0; return 0; /* nothing left to install */
+}
+static ABI int32_t jpegenc_query(const void *param) { (void)param; return 0x10000; }
+static ABI int32_t jpegenc_create(const void *param, void *memory, uint32_t size, void **handle) {
+    (void)param; (void)size; if (handle) *handle=memory; return 0;
+}
+static ABI int32_t jpegenc_unavailable(void) { return (int32_t)0x80650001; } /* no encoder: photo/screenshot features fail */
+static ABI int32_t addcont_none(void) { return (int32_t)0x80D90007; } /* SCE_APP_CONTENT_ERROR_NOT_FOUND: no add-ons */
+static ABI int32_t download_space(const void *mount, uint64_t *kb) { (void)mount; if (kb) *kb=UINT64_C(16)<<20; return 0; } /* 16 GiB */
+
 static const RuntimeExport exports[]={
     {"sceUserServiceInitialize",user_initialize}, {"sceUserServiceTerminate",user_terminate},
     {"sceUserServiceGetInitialUser",user_initial}, {"sceUserServiceGetLoginUserIdList",user_list},
@@ -706,6 +734,28 @@ static const RuntimeExport exports[]={
     {"sceNpScoreRecordGameData",np_signed_out}, {"sceNpScoreRecordScore",np_signed_out},
     {"sceNpScoreSetPlayerCharacterId",ok_void},
     {"sceVoiceCreatePort",voice_port}, {"sceVoiceDeletePort",ok_void},
+    {"sceVoiceGetMuteFlag",voice_get_mute}, {"sceVoiceSetMuteFlag",ok_void}, {"sceVoiceSetMuteFlagAll",ok_void},
+    {"sceVoiceGetVolume",voice_get_volume}, {"sceVoiceSetVolume",ok_void},
+    {"getpeername",net_unreachable}, {"getsockopt",net_unreachable}, {"sceNetGetpeername",net_unreachable},
+    {"sceHttpGetAllResponseHeaders",http_fail}, {"sceHttpParseResponseHeader",http_fail},
+    {"sceHttpRemoveRequestHeader",ok_void}, {"sceHttpUriBuild",http_fail}, {"sceHttpUriParse",http_fail},
+    {"sceHttpsSetSslCallback",ok_void},
+    {"sceImeKeyboardOpen",ime_unavailable}, {"sceImeKeyboardClose",ok_void}, {"sceImeUpdate",ok_void},
+    {"sceImeKeyboardGetResourceId",ime_unavailable},
+    {"sceNpAuthAbortRequest",ok_void}, {"sceNpCommerceShowPsStoreIcon",ok_void}, {"sceNpCommerceHidePsStoreIcon",ok_void},
+    {"sceNpCreateRequest",np_request}, {"sceNpGetAccountCountry",np_signed_out},
+    {"sceNpInGameMessageAbortHandle",ok_void}, {"sceNpSnsFacebookAbortRequest",ok_void},
+    {"sceNpSignalingGetConnectionFromNpId",np_signed_out}, {"sceNpSignalingGetConnectionInfo",np_signed_out},
+    {"sceNpSignalingGetPeerNetInfoResult",np_signed_out}, {"sceNpSignalingTerminateConnection",ok_void},
+    {"sceRemoteplayInitialize",ok_void}, {"sceRemoteplayTerminate",ok_void},
+    {"sceRemoteplayGetConnectionStatus",remoteplay_status},
+    {"sceCoredumpRegisterCoredumpHandler",ok_void}, {"sceCoredumpWriteUserData",ok_void},
+    {"scePlayGoGetLanguageMask",playgo_language_mask}, {"scePlayGoSetLanguageMask",playgo_set_language_mask},
+    {"scePlayGoGetToDoList",playgo_get_todo},
+    {"sceJpegEncQueryMemorySize",jpegenc_query}, {"sceJpegEncCreate",jpegenc_create}, {"sceJpegEncDelete",ok_void},
+    {"sceJpegEncEncode",jpegenc_unavailable},
+    {"sceAppContentAddcontEnqueueDownload",addcont_none}, {"sceAppContentAddcontMount",addcont_none},
+    {"sceAppContentDownloadDataGetAvailableSpaceKb",download_space},
     {"sceVoiceConnectIPortToOPort",ok_void}, {"sceVoiceDisconnectIPortFromOPort",ok_void},
     {"sceVoiceStart",ok_void}, {"sceVoiceStop",ok_void}, {"sceVoiceGetPortInfo",voice_info},
     {"sceVoiceReadFromOPort",voice_read}, {"sceVoiceWriteToIPort",voice_write},

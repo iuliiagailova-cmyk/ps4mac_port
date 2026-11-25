@@ -250,6 +250,10 @@ uintptr_t runtime_resolve(const char *name, int is_data) {
     if (audio) return audio;
     uintptr_t pad = runtime_pad_resolve(name);
     if (pad) return pad;
+    uintptr_t fiber = runtime_fiber_resolve(name);
+    if (fiber) return fiber;
+    uintptr_t image = runtime_image_resolve(name);
+    if (image) return image;
     uintptr_t rtc = runtime_rtc_resolve(name);
     if (rtc) return rtc;
     uintptr_t save = runtime_savedata_resolve(name);

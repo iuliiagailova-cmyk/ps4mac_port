@@ -1,0 +1,11 @@
+# The Last of Us Remastered (PS4) — game profile for ps4mac_port.
+# Data only: the core reads it by the Title ID in sce_sys/param.sfo. Environment variables (and
+# spartanport.ini, for the options it holds) win over the defaults below.
+
+title = "The Last of Us Remastered"
+title_ids = ["CUSA00552"]          # tested: CUSA00552 v01.00 (US)
+match_title = "The Last of Us"
+
+[patches]
+file = "patches.xml"               # "Bug Fix - Address Space Base": required on macOS
+app_ver = "01.00"

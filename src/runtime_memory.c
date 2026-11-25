@@ -517,11 +517,15 @@ static int32_t map_direct_locked(void **out, uint64_t size, int prot, int flags,
     return result;
 }
 static ABI int32_t direct_map(void **out, uint64_t size, int prot, int flags, int64_t physical, uint64_t alignment) {
+    void *asked=out ? *out : NULL;
     write_lock();
     int32_t result=map_direct_locked(out,size,prot,flags,physical,alignment);
     write_unlock();
     flush_hooks();
     if (!result) printf("Runtime: mapped direct memory %p, size=%" PRIu64 ", prot=0x%x\n", *out, size, prot);
+    if (asked && (result || *out!=asked))
+        printf("Runtime: direct memory asked at %p (flags 0x%x, alignment 0x%" PRIx64 "): %s %p\n", asked, flags,
+               alignment, result ? "failed" : "placed at", result ? NULL : *out);
     return result;
 }
 static ABI int32_t direct_map_named(void **out, uint64_t size, int prot, int flags, int64_t physical,

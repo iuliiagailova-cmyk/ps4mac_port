@@ -361,6 +361,19 @@ static ABI int32_t posix_key_create(uint32_t *k,KeyDestructor d) { int32_t r=key
 static ABI int32_t posix_key_delete(uint32_t k) { int32_t r=key_delete(k); return r ? r&0xffff : 0; }
 static ABI int32_t posix_key_set(uint32_t k,void *v) { int32_t r=key_set(k,v); return r ? r&0xffff : 0; }
 
+/* The Last of Us Remastered (25.11.2026). Names for debugging tools, a flush, timestamps: no effect
+ * here. Modules: a game's own are linked before it starts (link_modules.py), so loading one by
+ * path at run time finds nothing, and the list of loaded modules is empty. */
+static ABI int32_t kernel_range_name(void *address, uint64_t size, const char *name) { (void)address; (void)size; (void)name; return 0; }
+static ABI int32_t kernel_sync(void) { return 0; }
+static ABI int32_t kernel_utimes(const char *path, const void *times) { (void)path; (void)times; return 0; }
+static ABI int32_t module_not_found(void) { return (int32_t)0x80020002; } /* SCE_KERNEL_ERROR_ENOENT */
+static ABI int32_t module_list(int32_t *handles, uint64_t count, uint64_t *actual) {
+    (void)handles; (void)count;
+    if (actual) *actual=0;
+    return 0;
+}
+
 static const RuntimeExport exports[]={
     {"sceKernelClockGettime",kernel_clock_gettime}, {"clock_gettime",posix_clock_gettime},
     {"clock_getres",posix_clock_getres},
@@ -379,6 +392,10 @@ static const RuntimeExport exports[]={
     {"sceKernelPrintBacktraceWithModuleInfo",print_backtrace},
     {"getargc",get_argc}, {"getargv",get_argv}, {"sceKernelStopUnloadModule",stop_unload_module},
     {"sceKernelGetModuleInfoFromAddr",module_info_from_addr}, {"sceKernelMlock",kernel_mlock},
+    {"sceKernelSetVirtualRangeName",kernel_range_name}, {"sceKernelSync",kernel_sync},
+    {"sceKernelUtimes",kernel_utimes}, {"sceKernelLoadStartModule",module_not_found},
+    {"sceKernelDlsym",module_not_found}, {"sceKernelGetModuleInfo",module_not_found},
+    {"sceKernelGetModuleList",module_list},
     {"sceKernelGetModuleInfoForUnwind",module_info_for_unwind}, {"sceKernelSetPrtAperture",set_prt_aperture},
     {"sceKernelConvertUtcToLocaltime",utc_to_local}, {"sceKernelConvertLocaltimeToUtc",local_to_utc},
     {"__elf_phdr_match_addr",elf_phdr_match_addr}, {"_is_signal_return",is_signal_return},

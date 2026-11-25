@@ -198,11 +198,33 @@ static ABI int32_t rtc_parse_datetime(uint64_t *tick,const char *in) {
     if (!tick || !in) return ERR_INVALID_POINTER;
     return parse_rfc3339(in,tick) ? parse_rfc2822(in,tick) : 0;
 }
+/* The Last of Us Remastered (25.11.2026). */
+static ABI int32_t rtc_add_seconds(uint64_t *out, const uint64_t *in, int64_t seconds) {
+    if (!out || !in) return (int32_t)0x80B50002; /* SCE_RTC_ERROR_INVALID_POINTER */
+    *out=*in+(uint64_t)(seconds*1000000); return 0;
+}
+/* "Wed, 25 Nov 2026 22:00:00 +0100": utc is a tick, minutes the offset to show it at. */
+static ABI int32_t rtc_format_rfc2822(char *out, const uint64_t *utc, int32_t minutes) {
+    if (!out) return (int32_t)0x80B50002;
+    uint64_t tick=0;
+    if (utc) tick=*utc; else { struct timespec ts; clock_gettime(CLOCK_REALTIME,&ts);
+        tick=UNIX_EPOCH_TICKS+(uint64_t)ts.tv_sec*1000000u+(uint64_t)ts.tv_nsec/1000u; }
+    time_t seconds=(time_t)((int64_t)(tick-UNIX_EPOCH_TICKS)/1000000)+(time_t)minutes*60;
+    struct tm t; gmtime_r(&seconds,&t);
+    static const char *days[]={"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
+    static const char *months[]={"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
+    const int sign=minutes<0 ? '-' : '+', abs_minutes=minutes<0 ? -minutes : minutes;
+    sprintf(out,"%s, %02d %s %04d %02d:%02d:%02d %c%02d%02d",days[t.tm_wday],t.tm_mday,months[t.tm_mon],
+            t.tm_year+1900,t.tm_hour,t.tm_min,t.tm_sec,sign,abs_minutes/60,abs_minutes%60);
+    return 0;
+}
+
 static const RuntimeExport exports[]={
     {"sceRtcParseRFC3339",rtc_parse_rfc3339}, {"sceRtcParseDateTime",rtc_parse_datetime},
     {"sceRtcGetCurrentClockLocalTime",rtc_current_local}, {"sceRtcGetCurrentClock",rtc_current_clock},
     {"sceRtcGetCurrentTick",rtc_current_tick}, {"sceRtcGetCurrentNetworkTick",rtc_current_tick},
     {"sceRtcConvertUtcToLocalTime",rtc_utc_to_local}, {"sceRtcConvertLocalTimeToUtc",rtc_local_to_utc},
+    {"sceRtcTickAddSeconds",rtc_add_seconds}, {"sceRtcFormatRFC2822",rtc_format_rfc2822},
     {"sceRtcGetDayOfWeek",rtc_day_of_week}, {"sceRtcGetTick",rtc_get_tick}, {"sceRtcSetTick",rtc_set_tick},
     {"sceRtcGetTickResolution",rtc_tick_resolution}, {"sceRtcSetTime_t",rtc_set_time_t},
     {"sceRtcGetTime_t",rtc_get_time_t}, {"sceRtcFormatRFC2822LocalTime",rtc_rfc2822_local},

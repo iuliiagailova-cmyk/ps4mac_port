@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<!-- The Last of Us Remastered, CUSA00552 v01.00, eboot.bin sha256
+     c7621501c6e7f1051675cee39549859da9a14c43f29442bd046ed689fa25b323. Author: Iuliia Gailova.
+     "Bug Fix - Address Space Base": the engine's memory areas (memory-area-ps4.cpp) take 4 GiB
+     slots from a counter in .data that starts at 0x1000000000 (image offset 0x15175a0; the two
+     functions at image offsets 0xaa01b0 and 0xaa0290 hand out a slot and add 4 GiB), then map
+     direct memory with the slot as a hint and assert that the memory landed there. macOS reserves
+     0xfc0000000-0x7000000000 in every process (mmap there fails with EACCES, also MAP_FIXED, and
+     under Rosetta 2), so the counter starts at 0x8800000000 instead: the game's own range in
+     ps4mac_port (0x88-0xec00000000, below the runtime's placements). The game takes 6 slots at
+     start (0x8800000000-0x9fffffffff); its own limit check (slot + 8 GiB below 0xfc00000000)
+     stays. The site is found through the code that reads the counter. -->
+<Patch>
+    <TitleID>
+        <ID>CUSA00552</ID>
+    </TitleID>
+    <Metadata Title="The Last of Us" Name="Bug Fix - Address Space Base" Note="Moves the game's memory areas from 0x1000000000 (reserved by macOS) to 0x8800000000. Required on macOS." Author="Iuliia Gailova" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="true">
+        <PatchList>
+            <Line Type="bytes" Address="0x019175a0" Value="0000000088000000" Target="next_area"/>
+        </PatchList>
+        <Target Name="next_area" Address="0x019175a0" Pattern="48 8b 1d ?? ?? ?? ?? 48 01 d8 48 89 05 ?? ?? ?? ?? 48 b8 00 00 00 00 02 00 00 00 48 01 d8 48 c1 e8 22 48 83 f8 3f 72 ?? e8 ?? ?? ?? ?? 48 85 c0 74 ?? 48 8d 3d ?? ?? ?? ?? 48 8d 35 ?? ?? ?? ?? 48 8d 15 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? 41 b8 20 00 00 00 45 31 c9 ff ?? cd 41 49 89 5e 08" At="3" Ref="1" Tail="0"/>
+    </Metadata>
+</Patch>
