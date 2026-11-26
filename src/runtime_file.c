@@ -310,11 +310,33 @@ static void touch_for_write(void *buffer,uint64_t size) {
         *b=*b;
     }
 }
+/* The GPU side may protect a page again between the touch and the copy (a chunk it starts to
+ * watch, BufferCache::SampleHostChunks): the copy then fails with EFAULT having transferred
+ * nothing, and is retried after touching the pages again. The Last of Us stopped on such a read
+ * ("Unhandled filesystem error: SCE_KERNEL_ERROR_EFAULT"). */
+#define KERNEL_COPY_TRIES 8
+static ssize_t read_into_guest(int h,void *buffer,uint64_t size) {
+    ssize_t n=-1;
+    for (int i=0;i<KERNEL_COPY_TRIES;++i) {
+        touch_for_write(buffer,size);
+        n=host_read(h,buffer,size);
+        if (n>=0 || errno!=EFAULT) break;
+    }
+    return n;
+}
+static ssize_t pread_into_guest(int h,void *buffer,uint64_t size,int64_t offset) {
+    ssize_t n=-1;
+    for (int i=0;i<KERNEL_COPY_TRIES;++i) {
+        touch_for_write(buffer,size);
+        n=host_pread(h,buffer,size,offset);
+        if (n>=0 || errno!=EFAULT) break;
+    }
+    return n;
+}
 static int64_t do_read(int fd,void *buffer,uint64_t size) {
     int h=host_fd(fd);
     if (h<0) return -EBADF;
-    touch_for_write(buffer,size);
-    ssize_t n=host_read(h,buffer,size);
+    ssize_t n=read_into_guest(h,buffer,size);
     if (file_trace()) printf("File trace: read(fd %d, %p, %#llx) -> %lld\n",fd,buffer,(unsigned long long)size,(long long)(n<0 ? -errno : n));
     if (n<0) { if (audio_trace()) printf("Audio trace: read(fd %d, %llu) failed, errno %d\n",fd,(unsigned long long)size,errno); return -errno; }
     __atomic_add_fetch(&reads,1,__ATOMIC_RELAXED); __atomic_add_fetch(&bytes_read,(uint64_t)n,__ATOMIC_RELAXED);
@@ -323,8 +345,7 @@ static int64_t do_read(int fd,void *buffer,uint64_t size) {
 static int64_t do_pread(int fd,void *buffer,uint64_t size,int64_t offset) {
     int h=host_fd(fd);
     if (h<0) return -EBADF;
-    touch_for_write(buffer,size);
-    ssize_t n=host_pread(h,buffer,size,offset);
+    ssize_t n=pread_into_guest(h,buffer,size,offset);
     if (file_trace()) printf("File trace: pread(fd %d, %p, %#llx @%#llx) -> %lld\n",fd,buffer,(unsigned long long)size,(unsigned long long)offset,(long long)(n<0 ? -errno : n));
     if (n<0) { if (audio_trace()) printf("Audio trace: pread(fd %d, %llu @%lld) failed, errno %d\n",fd,(unsigned long long)size,(long long)offset,errno); return -errno; }
     __atomic_add_fetch(&reads,1,__ATOMIC_RELAXED); __atomic_add_fetch(&bytes_read,(uint64_t)n,__ATOMIC_RELAXED);

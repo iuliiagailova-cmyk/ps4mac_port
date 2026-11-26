@@ -14,7 +14,12 @@
      size pairs to 1920x1080 (fields +0x08, +0x18, +0x24, +0x38) and a tile grid of width/8 by
      height/4 (+0x40, +0x44). The patch writes the same instructions with the new size, as the
      engine's own mode switch at image offset 0x9104c0 does for its 1280x720, 1168x657 and
-     1024x600 modes. run.py picks the patch from render_resolution in spartanport.ini. -->
+     1024x600 modes. run.py picks the patch from render_resolution in spartanport.ini.
+     "Bug Fix - GPU Frame Watchdog": WaitOnContextDone (ndgi-orbis-device.cpp, image offset
+     0x9926f0) halts with "A frame did not complete in 2.00 seconds" when the label the GPU writes at
+     the end of a frame takes longer. On an M1 the first frame of the prologue's first level took
+     over 2 s (the game ran on at ~22 FPS afterwards); the float compared against (image offset
+     0x1130d18, read only there) becomes 30.0. -->
 <Patch>
     <TitleID>
         <ID>CUSA00552</ID>
@@ -24,6 +29,12 @@
             <Line Type="bytes" Address="0x019175a0" Value="0000000088000000" Target="next_area"/>
         </PatchList>
         <Target Name="next_area" Address="0x019175a0" Pattern="48 8b 1d ?? ?? ?? ?? 48 01 d8 48 89 05 ?? ?? ?? ?? 48 b8 00 00 00 00 02 00 00 00 48 01 d8 48 c1 e8 22 48 83 f8 3f 72 ?? e8 ?? ?? ?? ?? 48 85 c0 74 ?? 48 8d 3d ?? ?? ?? ?? 48 8d 35 ?? ?? ?? ?? 48 8d 15 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? 41 b8 20 00 00 00 45 31 c9 ff ?? cd 41 49 89 5e 08" At="3" Ref="1" Tail="0"/>
+    </Metadata>
+    <Metadata Title="The Last of Us" Name="Bug Fix - GPU Frame Watchdog" Note="The engine halts when a GPU frame takes over 2 seconds; the first frames after a level loads take longer here (shaders and textures are built then). The limit becomes 30 seconds. Required." Author="Iuliia Gailova" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="true">
+        <PatchList>
+            <Line Type="bytes" Address="0x01530d18" Value="0000f041" Target="watchdog_seconds"/>
+        </PatchList>
+        <Target Name="watchdog_seconds" Address="0x01530d18" Pattern="c5 f8 2e 05 ?? ?? ?? ?? 77 5a f3 90 48 89 df be ff ff ff ff" At="4" Ref="1" Tail="0"/>
     </Metadata>
     <Metadata Title="The Last of Us" Name="Resolution Patch - 480p" Note="Renders the game at 854x480 instead of 1920x1080." Author="Iuliia Gailova" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
         <PatchList>

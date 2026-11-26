@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <atomic>
 #include <limits>
+#include "common/logging/log.h"
 #include "shader_recompiler/info.h"
 #include "shader_recompiler/ir/basic_block.h"
 #include "shader_recompiler/ir/breadth_first_search.h"
@@ -575,8 +577,16 @@ IR::U32 CalculateBufferAddress(IR::IREmitter& ir, const IR::Inst& inst, const In
         index = ir.IAdd(index, vgpr_index);
     }
     if (buffer.add_tid_enable) {
-        ASSERT_MSG(info.sw_stage == SwStage::Compute,
-                   "Thread ID buffer addressing is not supported outside of compute.");
+        // ps4mac_port: The Last of Us uses it in graphics stages too. The lane id is a subgroup
+        // builtin there as well (CollectShaderInfoPass runs after this pass and enables it), so
+        // the index is built the same way instead of stopping the GPU process.
+        if (info.sw_stage != SwStage::Compute) {
+            static std::atomic<bool> warned{false};
+            if (!warned.exchange(true)) {
+                LOG_WARNING(Render_Recompiler,
+                            "Thread ID buffer addressing outside of compute: using the lane id");
+            }
+        }
         const IR::U32 thread_id{ir.LaneId()};
         index = ir.IAdd(index, thread_id);
     }

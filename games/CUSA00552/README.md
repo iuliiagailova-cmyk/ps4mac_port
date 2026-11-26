@@ -4,9 +4,9 @@
 |---|---|
 | Dump tested | CUSA00552 (US), version 01.00, base game |
 | Mac | MacBook Pro M1, 8 GB |
-| Status | boots, loads, reaches the title screen ("PRESS ANY BUTTON"); 4 minutes of the autotest without a crash |
-| FPS | loading screen 60; title screen 35–37 at 480p, 720p and 1080p alike (bound by write faults, not by resolution) |
-| Not tested | the menus beyond the title screen and gameplay; other regions and patches |
+| Status | menus, New Game, the prologue cutscene and the first playable scene (Sarah's room) |
+| FPS | 720p: Sarah's room ~22 (standing); title screen 35–37 at 480p, 720p and 1080p alike; cutscene and loading screens 60 |
+| Not tested | playing beyond the first room; other regions and patches |
 
 ## Profile
 
@@ -22,5 +22,18 @@
   `profile.toml`): it goes into `spartanport.ini` until the player picks another resolution in
   the in-game menu.
 
+- **Bug Fix - GPU Frame Watchdog** — the engine halts when a GPU frame takes over 2 seconds; the
+  first frames after a level loads take longer here, so the limit becomes 30 seconds.
+
 Everything else the game needed (fibers, PNG/JPEG decoding, a few kernel, Rtc and service
 functions) is in the core.
+
+## Notes
+
+- New Game asks for a save slot (the system's save list). The list is drawn by the graphics
+  service, out of reach of the runtime, so the core answers it as a player would: a new save when
+  saving, the newest save when loading.
+- Write faults (the game writing memory the GPU tracks, ~220/s in Sarah's room) cost the game's job
+  threads ~0.3 s per second in all. The core's "hot pages" (pages left writable) cut them to ~100/s
+  but break the particles the GPU simulates (the game stops on "Particle block traversal bug"), so
+  they stay off.
