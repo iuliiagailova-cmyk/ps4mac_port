@@ -24,6 +24,8 @@
 
 - **Bug Fix - GPU Frame Watchdog** — the engine halts when a GPU frame takes over 2 seconds; the
   first frames after a level loads take longer here, so the limit becomes 30 seconds.
+  This is a safety net for slow first frames in the core, not a property of the game: the goal
+  is for the game to run without it (docs/architecture.md, 4.1).
 
 Everything else the game needed (fibers, PNG/JPEG decoding, a few kernel, Rtc and service
 functions) is in the core.
