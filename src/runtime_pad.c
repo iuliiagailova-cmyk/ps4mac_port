@@ -6,6 +6,7 @@
  *   E Square, Q Triangle, 1 L1, 3 R1, R L2, F R2, Z L3, C R3,
  *   Enter Options, Tab left touchpad (photo mode), Backspace right touchpad (pause menu),
  *   IJKL d-pad (I up, K down, J left, L right).
+ *   X spins the left stick clockwise, V counterclockwise (apply_spin).
  * SPARTAN_KEY_MAP also takes the mouse: Mouse Left, Mouse Right, Mouse Middle, Mouse Back,
  * Mouse Forward, Wheel Up and Wheel Down (see mouse_names). */
 #define _GNU_SOURCE
@@ -13,7 +14,6 @@
 #include "gpu/spartanportgpu.h"
 #include "../bridge/ps4mac_bridge.h"
 #include <stdatomic.h>
-#include "qte_hook.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -39,6 +39,8 @@ enum {
     /* Host-only actions of the keyboard map: dodge tilts the right stick (apply_dodge); rage and
      * grab press two buttons together (apply_combos). */
     DODGE=0x20000000, RAGE=0x10000000, GRAB=0x08000000,
+    /* Spin the left stick around (apply_spin). */
+    SPIN_CW=0x04000000, SPIN_CCW=0x02000000,
 };
 typedef struct { uint16_t x, y; uint8_t id, reserve[3]; } PadTouch;
 typedef struct {
@@ -131,8 +133,8 @@ static SDL_Gamepad *current_gamepad(void) {
 /* Button sources: a host button or key and the PS4 button it presses. The defaults below can be
  * changed per PS4 button with SPARTAN_PAD_MAP (gamepad) and SPARTAN_KEY_MAP (keyboard), e.g.
  * SPARTAN_KEY_MAP="cross=Q,square=Left Shift" or SPARTAN_PAD_MAP="cross=b,circle=a": comma-separated
- * <ps4 button>=<SDL key or gamepad button name>. A mapped PS4 button loses its default sources;
- * <ps4 button>=None leaves it without any.
+ * <ps4 button>=<SDL key or gamepad button name>. A mapped PS4 button loses its default sources,
+ * and a mapped key or gamepad button its default actions; <ps4 button>=None leaves it without any.
  * touchpad_left (alias touchpad) and touchpad_right are the two sides of the touchpad click:
  * photo mode and the pause menu. Back/View (Share on a DualSense) is the right click, and with
  * L1 held the left one. Sticks, triggers, the real touchpad click and the overlay shortcuts are
@@ -142,7 +144,7 @@ static const struct { const char *name; uint32_t ps; } ps_names[]={
     {"l1",BTN_L1}, {"r1",BTN_R1}, {"l2",BTN_L2}, {"r2",BTN_R2}, {"l3",BTN_L3}, {"r3",BTN_R3},
     {"options",BTN_OPTIONS}, {"touchpad",CLICK_LEFT}, {"touchpad_left",CLICK_LEFT}, {"touchpad_right",CLICK_RIGHT},
     {"up",BTN_UP}, {"down",BTN_DOWN}, {"left",BTN_LEFT}, {"right",BTN_RIGHT},
-    {"dodge",DODGE}, {"rage",RAGE}, {"grab",GRAB},
+    {"dodge",DODGE}, {"rage",RAGE}, {"grab",GRAB}, {"spin_cw",SPIN_CW}, {"spin_ccw",SPIN_CCW},
 };
 typedef struct { int source; uint32_t ps; } ButtonSource;
 typedef struct { ButtonSource entries[48]; size_t count; } ButtonMap;
@@ -162,7 +164,8 @@ static ButtonMap key_map={{
     {SDL_SCANCODE_R,BTN_L2}, {SDL_SCANCODE_F,BTN_R2}, {SDL_SCANCODE_Z,BTN_L3}, {SDL_SCANCODE_C,BTN_R3},
     {SDL_SCANCODE_RETURN,BTN_OPTIONS}, {SDL_SCANCODE_TAB,CLICK_LEFT}, {SDL_SCANCODE_BACKSPACE,CLICK_RIGHT},
     {SDL_SCANCODE_I,BTN_UP}, {SDL_SCANCODE_K,BTN_DOWN}, {SDL_SCANCODE_J,BTN_LEFT}, {SDL_SCANCODE_L,BTN_RIGHT},
-},17};
+    {SDL_SCANCODE_X,SPIN_CW}, {SDL_SCANCODE_V,SPIN_CCW},
+},19};
 
 static char *trim(char *text) {
     while (*text==' ' || *text=='\t') ++text;
@@ -187,8 +190,8 @@ static int mouse_source(const char *name) {
 }
 
 static SDL_AtomicInt wheel_ticks[2]; /* notches not yet played: 0 up, 1 down */
+static SDL_AtomicInt mouse_motion[2]; /* x, y moved since the last read, in 1/16 px (L2 aim) */
 static struct { int phase; uint64_t until; } wheel_pulse[2]; /* phase 0 idle, 1 pressed, 2 gap */
-static SDL_AtomicInt mouse_motion[2]; /* x, y moved since the last read, in 1/16 px (stick prompts) */
 /* Runs on the window thread for every queued event (SDL_AddEventWatch). */
 static bool SDLCALL mouse_watch(void *userdata, SDL_Event *event) {
     (void)userdata;
@@ -291,6 +294,10 @@ static int apply_button_map(ButtonMap *map, const char *spec, bool keyboard) {
     if (!spec || !*spec) return 0;
     char copy[1024];
     snprintf(copy,sizeof(copy),"%s",spec);
+    /* The entries of spec, the last one for a button winning; NO_SOURCE: None. */
+    enum { NO_SOURCE=-1000 };
+    ButtonSource chosen[sizeof(map->entries)/sizeof(*map->entries)];
+    size_t count=0;
     int used=0;
     char *entry=copy;
     while (entry) {
@@ -307,26 +314,32 @@ static int apply_button_map(ButtonMap *map, const char *spec, bool keyboard) {
         entry=next;
         uint32_t ps=0;
         for (size_t i=0;i<sizeof(ps_names)/sizeof(*ps_names);++i) if (!SDL_strcasecmp(button,ps_names[i].name)) ps=ps_names[i].ps;
-        if (ps && !SDL_strcasecmp(name,"None")) { /* the button gets no source at all */
-            size_t kept=0;
-            for (size_t i=0;i<map->count;++i) if (map->entries[i].ps!=ps) map->entries[kept++]=map->entries[i];
-            map->count=kept;
-            ++used;
-            continue;
-        }
         const int mouse=keyboard && *name ? mouse_source(name) : 0;
-        const int source=!*name ? -1 : mouse ? mouse : keyboard ? key_source(name)
-                                                         : (int)SDL_GetGamepadButtonFromString(name);
-        if (!ps || source<=(keyboard ? (int)SDL_SCANCODE_UNKNOWN : (int)SDL_GAMEPAD_BUTTON_INVALID)) {
+        const bool none=!SDL_strcasecmp(name,"None"); /* the button gets no source at all */
+        const int source=none ? NO_SOURCE : !*name ? -1 : mouse ? mouse : keyboard ? key_source(name)
+                                                 : (int)SDL_GetGamepadButtonFromString(name);
+        if (!ps || (!none && source<=(keyboard ? (int)SDL_SCANCODE_UNKNOWN : (int)SDL_GAMEPAD_BUTTON_INVALID))) {
             printf("Runtime: pad map: ignored '%s=%s'\n",button,name);
             continue;
         }
-        size_t kept=0;
-        for (size_t i=0;i<map->count;++i) if (map->entries[i].ps!=ps) map->entries[kept++]=map->entries[i];
-        map->count=kept;
-        if (map->count<sizeof(map->entries)/sizeof(*map->entries)) map->entries[map->count++]=(ButtonSource){source,ps};
+        size_t i=0;
+        while (i<count && chosen[i].ps!=ps) ++i;
+        if (i==count && count<sizeof(chosen)/sizeof(*chosen)) ++count;
+        if (i<count) chosen[i]=(ButtonSource){source,ps};
         ++used;
     }
+    /* A mapped button loses its default sources, and a key or button given to one loses its
+     * default actions: X mapped to R3 no longer spins the stick as well. */
+    size_t kept=0;
+    for (size_t i=0;i<map->count;++i) {
+        bool taken=false;
+        for (size_t j=0;j<count && !taken;++j)
+            taken=chosen[j].ps==map->entries[i].ps || (chosen[j].source!=NO_SOURCE && chosen[j].source==map->entries[i].source);
+        if (!taken) map->entries[kept++]=map->entries[i];
+    }
+    map->count=kept;
+    for (size_t j=0;j<count;++j)
+        if (chosen[j].source!=NO_SOURCE && map->count<sizeof(map->entries)/sizeof(*map->entries)) map->entries[map->count++]=chosen[j];
     return used;
 }
 
@@ -342,154 +355,6 @@ static void load_button_maps(void) {
 static void key_axis(uint8_t *axis, bool negative, bool positive) {
     if (negative || positive) *axis=(uint8_t)(128-(negative ? 128 : 0)+(positive ? 127 : 0));
 }
-/* Stick prompts (SPARTAN_STICK_PROMPTS; the launcher sets it with Native Translation). keyboard: while
- * the game shows a stick-rotation prompt (src/qte_hook.h), W/A/S/D stop moving the left stick and
- * the player types the prompt's keys instead; a finished sequence makes the game's own rotation
- * check pass. A key of the sequence pressed out of turn starts it again; the prompt's timer still
- * decides when the QTE is lost. SPARTAN_QTE_SEQUENCES replaces sequences, e.g.
- * down180cw=D>S>A,360ccw=A>S>D>W (SDL key names joined by >). mouse: the same sequences drawn with
- * the mouse, each move of the menu's mouse prompt distance in a new direction standing for a key
- * (right D, down S, left A, up W). */
-enum { QTE_ACTIVE_US=150000, QTE_FIRST_ROTATION=4, QTE_ROTATIONS=6, QTE_KEYS_MAX=8 };
-enum { STICK_PROMPTS_OFF, STICK_PROMPTS_KEYBOARD, STICK_PROMPTS_MOUSE };
-static const char *const qte_names[QTE_ROTATIONS]={"up180cw","up180ccw","down180cw","down180ccw","360cw","360ccw"};
-/* As the prompts read in play (the game's Down180CW is typed D S A). */
-static const char *const qte_defaults[QTE_ROTATIONS]={"A>W>D","D>W>A","D>S>A","A>S>D","D>S>A>W","A>S>D>W"};
-static struct { int keys[QTE_KEYS_MAX]; unsigned length; } qte_sequences[QTE_ROTATIONS];
-static struct {
-    int loaded, mode, rotation;
-    uint32_t heartbeat;
-    uint64_t seen;       /* the last read that saw the prompt's frame count move */
-    unsigned step;
-    bool fresh, passed;  /* fresh: keys already held when the prompt appeared do not count */
-    bool held[SDL_SCANCODE_COUNT];
-    float mouse_x, mouse_y;
-    int mouse_key;       /* the direction key the gesture last stood for */
-} qte;
-static SpartanQteState spartanport_qte;
-uintptr_t spartanport_qte_state_address(void) { return (uintptr_t)&spartanport_qte; }
-
-/* "D>S>A" into scancodes: the length, or 0 when a key is unknown or the sequence too long. */
-static unsigned qte_parse_sequence(const char *text, int *keys) {
-    unsigned n=0;
-    char copy[160];
-    if (strlen(text)>=sizeof(copy)) return 0;
-    strcpy(copy,text);
-    for (char *name=copy,*next;name;name=next) {
-        next=strchr(name,'>');
-        if (next) *next++=0;
-        const int key=key_source(trim(name));
-        if (n==QTE_KEYS_MAX || key<=SDL_SCANCODE_UNKNOWN || key>=SDL_SCANCODE_COUNT) return 0;
-        keys[n++]=key;
-    }
-    return n;
-}
-
-static void qte_load(void) {
-    if (qte.loaded) return;
-    qte.loaded=1;
-    const char *mode=getenv("SPARTAN_STICK_PROMPTS");
-    qte.mode=!mode ? STICK_PROMPTS_OFF : !strcmp(mode,"keyboard") ? STICK_PROMPTS_KEYBOARD
-             : !strcmp(mode,"mouse") ? STICK_PROMPTS_MOUSE : STICK_PROMPTS_OFF;
-    for (unsigned i=0;i<QTE_ROTATIONS;++i) qte_sequences[i].length=qte_parse_sequence(qte_defaults[i],qte_sequences[i].keys);
-    const char *value=getenv("SPARTAN_QTE_SEQUENCES");
-    char entries[512];
-    if (value && strlen(value)<sizeof(entries)) {
-        strcpy(entries,value);
-        for (char *entry=entries,*next;entry;entry=next) {
-            next=strchr(entry,',');
-            if (next) *next++=0;
-            char *keys=strchr(entry,'=');
-            unsigned i=0;
-            if (keys) {
-                *keys++=0;
-                while (i<QTE_ROTATIONS && SDL_strcasecmp(trim(entry),qte_names[i])) ++i;
-            }
-            int parsed[QTE_KEYS_MAX];
-            const unsigned n=keys && i<QTE_ROTATIONS ? qte_parse_sequence(keys,parsed) : 0;
-            if (n) {
-                memcpy(qte_sequences[i].keys,parsed,sizeof(parsed));
-                qte_sequences[i].length=n;
-            } else if (*trim(entry)) {
-                printf("Runtime: stick prompts: ignored '%s'\n",trim(entry));
-            }
-        }
-    }
-    if (qte.mode!=STICK_PROMPTS_OFF)
-        printf("Runtime: stick prompts: %s%s\n",qte.mode==STICK_PROMPTS_KEYBOARD ? "keyboard" : "adaptive mouse",
-               spartanport_qte.block ? "" : " unavailable (prompt hooks not installed)");
-}
-
-static void qte_reset(void) {
-    qte.step=0; qte.passed=false; qte.fresh=true; qte.rotation=-1;
-    __atomic_store_n(&spartanport_qte.pass,0,__ATOMIC_RELAXED);
-}
-
-/* The rotation (0..5) the prompt on screen asks for, else -1. A prompt is up while its update
- * keeps counting frames; QTE_ACTIVE_US without a frame ends it (and resets the minigame). */
-static int qte_rotation(uint64_t now) {
-    if (!spartanport_qte.block) return -1;
-    const uint32_t beat=__atomic_load_n(&spartanport_qte.heartbeat,__ATOMIC_RELAXED);
-    if (beat!=qte.heartbeat) { qte.heartbeat=beat; qte.seen=now; }
-    if (now-qte.seen>QTE_ACTIVE_US) { qte_reset(); return -1; }
-    const unsigned type=*(const volatile uint16_t *)(uintptr_t)(spartanport_qte.block+SPARTAN_QTE_TYPE_OFFSET);
-    return type-QTE_FIRST_ROTATION<QTE_ROTATIONS ? (int)(type-QTE_FIRST_ROTATION) : -1;
-}
-
-/* A direction key (pressed or drawn) in the minigame: the next step, or back to the start. */
-static void qte_advance(int key, const int *sequence, unsigned length) {
-    if (qte.passed) return;
-    qte.step=key==sequence[qte.step] ? qte.step+1 : key==sequence[0];
-    if (qte.step==length) {
-        qte.passed=true;
-        __atomic_store_n(&spartanport_qte.pass,1,__ATOMIC_RELEASE);
-    }
-}
-
-/* The key the mouse gesture stands for (right D, down S, left A, up W) once it has moved the mouse
- * prompt distance since its last step and turned a new way, else 0. fresh: forget older motion. */
-static int qte_mouse_key(bool fresh) {
-    const float dx=SDL_SetAtomicInt(&mouse_motion[0],0)/16.0f, dy=SDL_SetAtomicInt(&mouse_motion[1],0)/16.0f;
-    if (fresh) { qte.mouse_x=qte.mouse_y=0; qte.mouse_key=0; return 0; }
-    qte.mouse_x+=dx; qte.mouse_y+=dy;
-    const float step=(float)spartanportgpu_mouse_prompt_distance();
-    if (qte.mouse_x*qte.mouse_x+qte.mouse_y*qte.mouse_y<step*step) return 0;
-    const float ax=qte.mouse_x<0 ? -qte.mouse_x : qte.mouse_x, ay=qte.mouse_y<0 ? -qte.mouse_y : qte.mouse_y;
-    const int key=ax>=ay ? (qte.mouse_x>0 ? SDL_SCANCODE_D : SDL_SCANCODE_A)
-                         : (qte.mouse_y>0 ? SDL_SCANCODE_S : SDL_SCANCODE_W);
-    qte.mouse_x=qte.mouse_y=0;
-    if (key==qte.mouse_key) return 0;
-    qte.mouse_key=key;
-    return key;
-}
-
-/* One read of the stick prompts (keys: SDL's keyboard state); true while they own W/A/S/D. */
-static bool qte_play(const bool *keys, uint64_t now) {
-    qte_load();
-    if (qte.mode==STICK_PROMPTS_OFF) return false;
-    const int rotation=qte_rotation(now);
-    if (rotation<0) return false;
-    if (rotation!=qte.rotation) { qte.rotation=rotation; qte.step=0; }
-    const int *sequence=qte_sequences[rotation].keys;
-    const unsigned length=qte_sequences[rotation].length;
-    if (qte.mode==STICK_PROMPTS_MOUSE) {
-        const int key=qte_mouse_key(qte.fresh);
-        if (key) qte_advance(key,sequence,length);
-    } else {
-        for (unsigned i=0;i<length;++i) {
-            const int key=sequence[i];
-            unsigned first=0;
-            while (sequence[first]!=key) ++first;
-            if (first<i) continue;  /* a key listed twice is looked at once */
-            const bool pressed=keys[key] && !qte.held[key] && !qte.fresh;
-            qte.held[key]=keys[key];
-            if (pressed) qte_advance(key,sequence,length);
-        }
-    }
-    qte.fresh=false;
-    return true;
-}
-
 static void sample_host(PadData *d) {
     memset(d,0,sizeof(*d));
     d->left_x=d->left_y=d->right_x=d->right_y=128;
@@ -533,10 +398,8 @@ static void sample_host(PadData *d) {
         if (source_down(key_map.entries[i].source,k,mouse,wheel)) d->buttons|=key_map.entries[i].ps;
     if (d->buttons & BTN_L2) d->l2=255;
     if (d->buttons & BTN_R2) d->r2=255;
-    if (!qte_play(k,d->timestamp)) {
-        key_axis(&d->left_x,k[SDL_SCANCODE_A],k[SDL_SCANCODE_D]);
-        key_axis(&d->left_y,k[SDL_SCANCODE_W],k[SDL_SCANCODE_S]);
-    }
+    key_axis(&d->left_x,k[SDL_SCANCODE_A],k[SDL_SCANCODE_D]);
+    key_axis(&d->left_y,k[SDL_SCANCODE_W],k[SDL_SCANCODE_S]);
     key_axis(&d->right_x,k[SDL_SCANCODE_LEFT],k[SDL_SCANCODE_RIGHT]);
     key_axis(&d->right_y,k[SDL_SCANCODE_UP],k[SDL_SCANCODE_DOWN]);
 }
@@ -681,8 +544,7 @@ static void replay_sample(PadData *d) {
  * again. A direction holds AIM_HOLD_US after the last movement, over the gaps between mouse reports.
  * Absolute: where the mouse was when L2 was pressed is the centre, and the stick points from it to
  * where the mouse is (full tilt AIM_RADIUS_PX away at 100 %; the offset stops there, so coming back
- * works at once). The menu's sensitivity divides both distances. Reads after the stick prompts, so a
- * prompt drawn with the mouse comes first. */
+ * works at once). The menu's sensitivity divides both distances. */
 enum { AIM_HOLD_US=40000, AIM_STEP_MIN_US=1000, AIM_STEP_MAX_US=50000, AIM_RADIUS_PX=200 };
 static const float AIM_FULL_PX_PER_MS=1.2f;
 static struct { uint64_t last, moved; int x, y; bool held; float offset_x, offset_y; } aim;
@@ -758,6 +620,35 @@ static void apply_dodge(PadData *d) {
     if (held || d->timestamp<dodge.until) { d->right_x=dodge.x; d->right_y=dodge.y; }
 }
 
+/* Spin (SPARTAN_KEY_MAP "spin_cw=<key>", "spin_ccw=<key>"; X and V by default): while the source
+ * is held the left stick turns around at full tilt, one turn per SPIN_TURN_US, for the "rotate the
+ * stick" prompts of any game on a keyboard. It starts where the left stick points when the source
+ * goes down (WASD or a gamepad stick held toward the prompt's first direction), else up, and never
+ * passes through the centre: games read a turn as a run of directions, and a stop in the middle
+ * breaks it. Both held: no spin. */
+enum { SPIN_TURN_US=600000, SPIN_DEADZONE=40 };
+static struct { int dir; double angle; uint64_t last; } spin;
+static void reset_spin(void) { spin.dir=0; }
+static void apply_spin(PadData *d) {
+    const uint32_t held=d->buttons & (SPIN_CW|SPIN_CCW);
+    d->buttons&=~(uint32_t)(SPIN_CW|SPIN_CCW);
+    const int dir=held==SPIN_CW ? 1 : held==SPIN_CCW ? -1 : 0;
+    if (!dir) { spin.dir=0; return; }
+    if (dir!=spin.dir) {
+        const int dx=d->left_x-128, dy=d->left_y-128;
+        /* Angles with y down, as the stick reports it: clockwise on screen is a growing angle. */
+        spin.angle=abs(dx)<SPIN_DEADZONE && abs(dy)<SPIN_DEADZONE ? -M_PI/2 : atan2(dy,dx);
+        spin.last=d->timestamp;
+        spin.dir=dir;
+    }
+    const uint64_t elapsed=d->timestamp>spin.last ? d->timestamp-spin.last : 0;
+    spin.last=d->timestamp;
+    spin.angle=fmod(spin.angle+dir*2*M_PI*(double)elapsed/SPIN_TURN_US,2*M_PI);
+    const long x=lround(128+127.5*cos(spin.angle)), y=lround(128+127.5*sin(spin.angle));
+    d->left_x=(uint8_t)(x<0 ? 0 : x>255 ? 255 : x);
+    d->left_y=(uint8_t)(y<0 ? 0 : y>255 ? 255 : y);
+}
+
 /* R3 + L1 + R1 goes through the engine frame rates live (60 for spots that break at a higher
  * rate). The three stay hidden from the game until each one is released: a stray R1 grabs. */
 enum { ENGINE_FPS_COMBO=BTN_R3|BTN_L1|BTN_R1 };
@@ -778,7 +669,7 @@ static void engine_fps_combo(PadData *d) {
 static int hold_after_capture;
 static void sample(PadData *d) {
     sample_host(d);
-    if (spartanportgpu_overlay_captures_input()) { hold_after_capture=1; click.side=-1; reset_dodge(); return; }
+    if (spartanportgpu_overlay_captures_input()) { hold_after_capture=1; click.side=-1; reset_dodge(); reset_spin(); return; }
     record_sample(d); /* the click sources as they are: a replay plays them again */
     read_inject();
     replay_sample(d);
@@ -789,6 +680,7 @@ static void sample(PadData *d) {
     for (int i=0;i<4;++i) if (injected.stick[i]>=0) *axes[i]=(uint8_t)injected.stick[i];
     apply_combos(d);
     apply_dodge(d);
+    apply_spin(d);
     apply_mouse_aim(d);
     note_pause_key(d);
     engine_fps_combo(d);

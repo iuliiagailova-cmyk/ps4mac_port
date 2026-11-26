@@ -114,8 +114,6 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.anisotropy = SpartanGraphics::ParseAnisotropy(i);
     } else if (key == "vibration") {
         v.vibration = value.empty() ? 100 : std::clamp(i, 0, 100);
-    } else if (key == "mouse_prompt_distance") {
-        v.mouse_prompt_distance = value.empty() ? 48 : std::clamp(i, 16, 200);
     } else if (key == "mouse_lock") {
         v.mouse_lock = value.empty() || i != 0;
     } else if (key == "mouse_aim_style") {
@@ -178,7 +176,7 @@ void Load() {
         {"SPARTAN_STALE_READBACK", "stale_readback"},     {"SPARTAN_FSR1", "fsr1"},
         {"SPARTAN_RCAS", "rcas"},                        {"SPARTAN_FRAMES_AHEAD", "frames_queued"},
         {"SPARTAN_ANISOTROPY", "anisotropy"},            {"SPARTAN_VIBRATION", "vibration"},
-        {"SPARTAN_MOUSE_PROMPT_DISTANCE", "mouse_prompt_distance"}, {"SPARTAN_MOUSE_LOCK", "mouse_lock"},
+        {"SPARTAN_MOUSE_LOCK", "mouse_lock"},
         {"SPARTAN_MOUSE_AIM_STYLE", "mouse_aim_style"}, {"SPARTAN_MOUSE_AIM_SENSITIVITY", "mouse_aim_sensitivity"},
 
     };
@@ -331,9 +329,9 @@ void Save() {
                  resolution_names[std::clamp(v.render_resolution.load(), 0, int(resolution_names.size()) - 1)].c_str(),
                  v.engine_fps.load(), int(v.deferred_readback.load()), int(v.stale_readback.load()),
                  int(v.restart_unconfirmed.load()));
-    std::fprintf(file, "anisotropy=%d\nvibration=%d\nmouse_prompt_distance=%d\nmouse_lock=%d\nmouse_aim_style=%d\n"
+    std::fprintf(file, "anisotropy=%d\nvibration=%d\nmouse_lock=%d\nmouse_aim_style=%d\n"
                        "mouse_aim_sensitivity=%d\n",
-                 v.anisotropy.load(), v.vibration.load(), v.mouse_prompt_distance.load(), int(v.mouse_lock.load()),
+                 v.anisotropy.load(), v.vibration.load(), int(v.mouse_lock.load()),
                  v.mouse_aim_style.load(), v.mouse_aim_sensitivity.load());
     // Read by run.sh at start.
     std::fprintf(file, "live_resolution=%s\n", v.live_resolution < 0 ? "auto"

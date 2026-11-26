@@ -500,13 +500,6 @@ extern "C" void spartanportgpu_movie_picture(void) {
     Vulkan::MovieBars::Cutscenes().NotePicture(Vulkan::MovieBars::NowMs());
 }
 
-extern "C" int spartanportgpu_mouse_prompt_distance(void) {
-    if (const Ps4macInput* input = Ps4mac::Gfx::GuestInput()) {
-        return input->mouse_prompt_distance.load(std::memory_order_relaxed);
-    }
-    return SpartanSettings::Get().mouse_prompt_distance.load(std::memory_order_relaxed);
-}
-
 extern "C" int spartanportgpu_mouse_aim_style(void) {
     if (const Ps4macInput* input = Ps4mac::Gfx::GuestInput()) {
         return input->mouse_aim_style.load(std::memory_order_relaxed);

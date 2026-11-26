@@ -297,8 +297,6 @@ void GameTab() {
     if (BeginRows("##controller")) {
         SliderRow("Vibration", s.vibration, 0, 100, "%d%%",
                   "Strength of the controller's vibration. 0% turns it off.");
-        SliderRow("Mouse prompt distance", s.mouse_prompt_distance, 16, 200, "%d px",
-                  "With Joystick prompts on Adaptive mouse: how far the mouse moves for one step of a rotation.");
         static const char* const aim_styles[] = {"Relative", "Absolute"};
         ChoiceRow("Right stick style", s.mouse_aim_style, aim_styles, nullptr, 2,
                   "L2 aim with the mouse (Head of Helios, Bow of Apollo). Relative: the stick follows the "

@@ -286,8 +286,6 @@ void PublishInput(void* sdl_window) {
     input->overlay_captures.store(SpartanOverlay::CapturesInput() ? 1 : 0, std::memory_order_relaxed);
     const auto& settings = SpartanSettings::Get();
     input->vibration.store(settings.vibration.load(std::memory_order_relaxed), std::memory_order_relaxed);
-    input->mouse_prompt_distance.store(settings.mouse_prompt_distance.load(std::memory_order_relaxed),
-                                       std::memory_order_relaxed);
     input->mouse_aim_style.store(settings.mouse_aim_style.load(std::memory_order_relaxed),
                                  std::memory_order_relaxed);
     input->mouse_aim_sensitivity.store(settings.mouse_aim_sensitivity.load(std::memory_order_relaxed),

@@ -430,8 +430,6 @@ add_executable(graphics-settings-test EXCLUDE_FROM_ALL ../tests/test_graphics_se
     shim/spartanport_settings.cpp)
 target_include_directories(graphics-settings-test PRIVATE shim)
 target_compile_options(graphics-settings-test PRIVATE -UNDEBUG)
-add_executable(qte-hook-test EXCLUDE_FROM_ALL ../tests/test_qte_hook.cpp)
-target_compile_options(qte-hook-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 add_executable(menu-hook-test EXCLUDE_FROM_ALL ../tests/test_menu_hook.cpp)
 target_compile_options(menu-hook-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 add_executable(readback-sources-test EXCLUDE_FROM_ALL ../tests/test_readback_sources.cpp)

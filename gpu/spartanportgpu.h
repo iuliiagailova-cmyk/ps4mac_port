@@ -46,8 +46,6 @@ void spartanportgpu_engine_fps_cycle(void);
 /* The video decoder handed the game a picture: a cutscene is on screen (the presenter draws
  * black bars outside its 16:9 picture when the render resolution is not 16:9). */
 void spartanportgpu_movie_picture(void);
-/* Mouse movement in px that counts as one step of a stick prompt, set in the menu. */
-int spartanportgpu_mouse_prompt_distance(void);
 /* The pause key (touchpad right) was pressed: it lets go of the mouse lock, or takes it back. */
 void spartanportgpu_mouse_pause_key(void);
 /* L2 aim with the mouse, set in the menu: 0 relative (follows movement), 1 absolute. */

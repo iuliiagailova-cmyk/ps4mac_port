@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define PS4MAC_BRIDGE_VERSION 5u
+#define PS4MAC_BRIDGE_VERSION 6u
 
 /* Guest -> graphics, in order (submissions and memory changes share one ring: a submission
  * must see the mappings made before it). Messages with PS4MAC_FLAG_REPLY get a PS4MAC_REPLY
@@ -110,7 +110,7 @@ typedef struct Ps4macInput {
     PS4MAC_ATOMIC(uint32_t) wheel_notches[2]; /* up, down */
     PS4MAC_ATOMIC(int32_t) motion[2];         /* x, y in 1/16 px */
     /* Settings the menu changes that the guest reads (SpartanSettings). */
-    PS4MAC_ATOMIC(int32_t) vibration, mouse_prompt_distance, mouse_aim_style, mouse_aim_sensitivity;
+    PS4MAC_ATOMIC(int32_t) vibration, mouse_aim_style, mouse_aim_sensitivity;
     PS4MAC_ATOMIC(uint8_t) keys[512];         /* SDL scancodes: 1 while down */
 } Ps4macInput;
 

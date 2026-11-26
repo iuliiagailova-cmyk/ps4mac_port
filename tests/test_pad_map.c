@@ -5,7 +5,6 @@
 
 int spartanportgpu_overlay_captures_input(void) { return 0; }
 int spartanportgpu_vibration_percent(void) { return 100; }
-int spartanportgpu_mouse_prompt_distance(void) { return 48; }
 static int pause_keys;
 void spartanportgpu_mouse_pause_key(void) { ++pause_keys; }
 static int aim_style;
@@ -110,9 +109,9 @@ int main(void) {
     assert(SDL_GetAtomicInt(&wheel_ticks[1])==0 && !wheel_held(1,t1));
     /* Rage: one source for L3 + R3; "None" clears L3 and R3 so their keys press nothing. */
     ButtonMap rage=key_map;
-    assert(apply_button_map(&rage,"l3=None,r3=none,rage=V",true)==3);
+    assert(apply_button_map(&rage,"l3=None,r3=none,rage=B",true)==3);
     assert(pressed_by(&rage,SDL_SCANCODE_Z)==0 && pressed_by(&rage,SDL_SCANCODE_C)==0);
-    assert(pressed_by(&rage,SDL_SCANCODE_V)==RAGE);
+    assert(pressed_by(&rage,SDL_SCANCODE_B)==RAGE);
     PadData sparta={0};
     sparta.buttons=RAGE|BTN_SQUARE;
     apply_combos(&sparta);
@@ -214,79 +213,45 @@ int main(void) {
     p.buttons=0; p.right_x=p.right_y=128; p.timestamp+=1000;
     apply_dodge(&p);
     assert(p.right_x==128 && p.right_y==128);
-    /* Keyboard rotation minigame: a prompt is up while the update hook counts frames. */
-    _putenv("SPARTAN_STICK_PROMPTS=keyboard");
-    _putenv("SPARTAN_QTE_SEQUENCES=360ccw=Q>E, up180cw = D > S > A ,bogus=W,down180cw=D>Mouse Left");
-    static uint8_t prompt[0x20];
-    spartanport_qte.block=(uint64_t)(uintptr_t)prompt;
-    static bool keyboard[SDL_SCANCODE_COUNT];
-    uint64_t now=10000000;
-    prompt[SPARTAN_QTE_TYPE_OFFSET]=4;                            /* Up180CW: D S A */
-    assert(!qte_play(keyboard,now));                           /* no frames: no prompt */
-    assert(qte_sequences[2].length==3 && qte_sequences[2].keys[1]==SDL_SCANCODE_S); /* kept */
-    assert(qte_sequences[5].length==2 && qte_sequences[5].keys[0]==SDL_SCANCODE_Q);
-    keyboard[SDL_SCANCODE_D]=true;                             /* held while walking in */
-    ++spartanport_qte.heartbeat;
-    assert(qte_play(keyboard,now) && qte.step==0);
-    keyboard[SDL_SCANCODE_D]=false;
-    now+=16000; ++spartanport_qte.heartbeat;
-    assert(qte_play(keyboard,now) && qte.step==0);
-    const int wrong[]={SDL_SCANCODE_D,SDL_SCANCODE_S,SDL_SCANCODE_D,SDL_SCANCODE_S,SDL_SCANCODE_A};
-    const unsigned steps[]={1,2,1,2,3};                        /* D out of turn: back to step 1 */
-    for (unsigned i=0;i<5;++i) {
-        keyboard[wrong[i]]=true; now+=16000; ++spartanport_qte.heartbeat;
-        assert(qte_play(keyboard,now) && qte.step==steps[i]);
-        keyboard[wrong[i]]=false; now+=16000; ++spartanport_qte.heartbeat;
-        assert(qte_play(keyboard,now));
-    }
-    assert(qte.passed && spartanport_qte.pass==1);
-    spartanport_qte.pass=0;                                           /* the rotation stub answered */
-    keyboard[SDL_SCANCODE_D]=true; now+=16000; ++spartanport_qte.heartbeat;
-    assert(qte_play(keyboard,now) && spartanport_qte.pass==0);         /* once per prompt */
-    keyboard[SDL_SCANCODE_D]=false;
-    now+=QTE_ACTIVE_US+1;                                      /* the prompt went away */
-    assert(!qte_play(keyboard,now) && !qte.passed && qte.step==0);
-    prompt[SPARTAN_QTE_TYPE_OFFSET]=1;                            /* a circle prompt: WASD stay */
-    ++spartanport_qte.heartbeat;
-    assert(!qte_play(keyboard,now));
-    prompt[SPARTAN_QTE_TYPE_OFFSET]=9;                            /* 360CCW, custom Q E */
-    now+=QTE_ACTIVE_US+1; ++spartanport_qte.heartbeat;
-    assert(qte_play(keyboard,now));
-    const int custom[]={SDL_SCANCODE_Q,SDL_SCANCODE_E};
-    for (unsigned i=0;i<2;++i) {
-        keyboard[custom[i]]=true; now+=16000; ++spartanport_qte.heartbeat;
-        assert(qte_play(keyboard,now));
-        keyboard[custom[i]]=false;
-    }
-    assert(spartanport_qte.pass==1);
-    int parsed[QTE_KEYS_MAX];
-    assert(qte_parse_sequence("Left Shift > Space",parsed)==2 && parsed[0]==SDL_SCANCODE_LSHIFT);
-    assert(!qte_parse_sequence("D>Mouse Left",parsed) && !qte_parse_sequence("A>B>C>D>E>F>G>H>I",parsed));
-    /* Adaptive mouse: the same sequence drawn, one step per mouse_step px in a new direction. */
-    qte.mode=STICK_PROMPTS_MOUSE;
-    prompt[SPARTAN_QTE_TYPE_OFFSET]=6;                            /* Down180CW: D S A */
-    SDL_Event move={0};
-    move.type=SDL_EVENT_MOUSE_MOTION;
-    move.motion.xrel=500.0f; mouse_watch(NULL,&move);          /* before the prompt: forgotten */
-    now+=QTE_ACTIVE_US+1;
-    assert(!qte_play(keyboard,now));                           /* no prompt between the two */
-    ++spartanport_qte.heartbeat;
-    assert(qte_play(keyboard,now) && qte.step==0);
-    const float path[][2]={{20,0},{30,5},{40,0},{0,30},{5,50},{-60,0},{-30,0}};
-    const unsigned drawn[]={0,1,1,1,2,3,3};                    /* right, down, left; once each */
-    for (unsigned i=0;i<7;++i) {
-        move.motion.xrel=path[i][0]; move.motion.yrel=path[i][1];
-        mouse_watch(NULL,&move);
-        now+=16000; ++spartanport_qte.heartbeat;
-        assert(qte_play(keyboard,now) && qte.step==drawn[i]);
-    }
-    assert(spartanport_qte.pass==1);
-    move.motion.xrel=0; move.motion.yrel=-3; mouse_watch(NULL,&move);  /* jitter: nothing */
-    now+=QTE_ACTIVE_US+1;
-    assert(!qte_play(keyboard,now));
-    ++spartanport_qte.heartbeat;
-    assert(qte_play(keyboard,now) && qte.step==0 && spartanport_qte.pass==0);
-    spartanport_qte.block=0;
+    /* Spin: the left stick turns at full tilt from where it points, never through the centre.
+     * Checked the way games read a turn (God of War III's rotation prompts): four directions, a
+     * direction once a component reaches 0.6, and a sequence that breaks on any other direction,
+     * the centre included. Up180CW is left, up, right; 360CCW from up is up, left, down, right. */
+    assert(pressed_by(&key_map,SDL_SCANCODE_X)==SPIN_CW && pressed_by(&key_map,SDL_SCANCODE_V)==SPIN_CCW);
+    static const struct { int dir, start_x, start_y; int sequence[5]; } turns[]={
+        {SPIN_CW,0,128,{4,3,2}},          /* A held, X: Up180CW */
+        {SPIN_CW,255,128,{2,1,4}},        /* D held, X: Down180CW */
+        {SPIN_CCW,255,128,{2,3,4}},       /* D held, V: Up180CCW */
+        {SPIN_CCW,128,128,{3,4,1,2,3}},   /* nothing held, V: a full turn from up */
+    };
+    const uint64_t rates[]={16667,33333,50000};  /* the game reading the pad at 60, 30, 20 Hz */
+    for (size_t t=0;t<sizeof(turns)/sizeof(*turns);++t)
+        for (size_t r=0;r<sizeof(rates)/sizeof(*rates);++r) {
+            reset_spin();
+            unsigned step=0; int last=-1; bool broken=false;
+            const unsigned length=turns[t].sequence[4] ? 5 : 3;
+            for (uint64_t now=1000000; step<length && now<1000000+2*SPIN_TURN_US; now+=rates[r]) {
+                PadData q={.buttons=(uint32_t)turns[t].dir,.left_x=(uint8_t)turns[t].start_x,
+                           .left_y=(uint8_t)turns[t].start_y,.timestamp=now};
+                apply_spin(&q);
+                assert(!(q.buttons & (SPIN_CW|SPIN_CCW)));
+                const float x=(q.left_x-128)/127.5f, y=(q.left_y-128)/127.5f;
+                assert(x*x+y*y>0.95f);
+                const int sector=fabsf(x)<0.6f && fabsf(y)<0.6f ? 0
+                                 : fabsf(y)>fabsf(x) ? (y>0 ? 1 : 3) : (x>0 ? 2 : 4);
+                if (sector==last) continue;
+                last=sector;
+                if (sector==turns[t].sequence[step]) ++step;
+                else broken=true;
+            }
+            assert(step==length && !broken);
+        }
+    /* Released, both held, or the menu open: the stick is the player's again. */
+    PadData q={.buttons=SPIN_CW|SPIN_CCW,.left_x=128,.left_y=128,.timestamp=5000000};
+    apply_spin(&q);
+    assert(q.left_x==128 && q.left_y==128 && !q.buttons);
+    q.buttons=0; apply_spin(&q);
+    assert(q.left_x==128 && q.left_y==128);
 
     puts("PASS: pad and key maps");
 }
