@@ -204,11 +204,14 @@ private:
     /// refilled every frame; the guest's fences are written when work is recorded, so it may run
     /// ahead of the GPU) must stay copied, or the GPU reads the next frame's data (R&C: overexposed
     /// frames; God of War III: lightning whitened the screen). Every 2 s each chunk a host buffer
-    /// covers is write-watched for 150 ms; written in 3 of its last 4 windows, it leaves the host
-    /// regions for good (the copying path, with tracking). SPARTAN_HOST_SAMPLE=0 turns it off.
+    /// covers is write-watched for 150 ms (a new chunk at once, window after window until it has
+    /// 4); written in 3 of its last 4 windows, it leaves the host regions for good (the copying
+    /// path, with tracking) and is remembered for the next session. SPARTAN_HOST_SAMPLE=0 turns
+    /// sampling off.
     struct HostSample {
         std::chrono::steady_clock::time_point armed{};
         bool watching = false;
+        bool demoted = false;
         u8 history = 0;  ///< one bit per window, newest lowest: written
         u8 windows = 0;
     };
@@ -219,6 +222,11 @@ private:
     PageManager* page_manager = nullptr;
     void SampleHostChunks();
     void DemoteHostChunk(VAddr chunk);
+    /// The demoted chunks are kept in <SPARTAN_DATA_DIR>/host_rewritten.txt: the next session
+    /// copies them from the start (God of War III: no white flash on the first hits).
+    static constexpr size_t MaxRewrittenChunks = 64;
+    void LoadRewrittenChunks();
+    void SaveRewrittenChunks();
     void SyncHostRegions();
     const HostRegion* FindHostRegion(VAddr address, u64 size, bool* straddles = nullptr);
     std::pair<const Buffer*, u64> ObtainHostBuffer(VAddr device_addr, u64 size);

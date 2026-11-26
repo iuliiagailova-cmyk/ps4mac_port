@@ -9,6 +9,9 @@
 #include <algorithm>
 #include <bit>
 #include <cstdlib>
+#include <cstdio>
+#include <fstream>
+#include <string>
 #include <magic_enum/magic_enum.hpp>
 #include "spartanport_copy.h"
 #include "spartanport_toggles.h"
@@ -111,6 +114,9 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
         host_buffers = instance.IsExternalMemoryHostSupported() && !dma_enabled;
         std::printf("Host buffers: %s\n", host_buffers ? "on (guest memory used in place)"
                                                        : "unavailable (no VK_EXT_external_memory_host or DMA on)");
+        if (host_buffers) {
+            LoadRewrittenChunks();
+        }
     }
 #endif
     if (const char* env = std::getenv("SPARTAN_HOST_BUFFERS_MIN_MB")) {
@@ -1211,6 +1217,9 @@ void BufferCache::SampleHostChunks() {
         std::scoped_lock lock{host_sample_mutex};
         // Windows that ended without a write.
         for (auto& [chunk, sample] : host_samples) {
+            if (sample.demoted) {
+                continue;
+            }
             if (sample.watching && now - sample.armed >= Window) {
                 sample.watching = false;
                 page_manager->UpdatePageWatchers<false, false>(chunk, Chunk);
@@ -1219,22 +1228,24 @@ void BufferCache::SampleHostChunks() {
             }
             if (sample.windows >= 4 && std::popcount(unsigned(sample.history & 0xf)) >= 3) {
                 demote.push_back(chunk);
+                sample.demoted = true; // its buffer goes at the next SyncHostRegions: not armed again
             }
         }
-        for (const VAddr chunk : demote) {
-            host_samples.erase(chunk);
-        }
-        // A new round: every chunk a host buffer covers, every 2 s.
-        if (now >= host_sample_arm) {
+        // Every chunk a host buffer covers, every 2 s; a new one at once and in back-to-back
+        // windows until it has 4: the GPU reads it in place from its first use, so a buffer the
+        // game refills every frame (God of War III's hit sparks) shows the next frame's data
+        // until it is found.
+        const bool round = now >= host_sample_arm;
+        if (round) {
             host_sample_arm = now + std::chrono::seconds(2);
-            for (const auto& [key, buffer] : host_spans) {
-                for (VAddr chunk = buffer->CpuAddr(); chunk < buffer->CpuAddr() + buffer->SizeBytes(); chunk += Chunk) {
-                    HostSample& sample = host_samples[chunk];
-                    if (!sample.watching) {
-                        sample.watching = true;
-                        sample.armed = now;
-                        page_manager->UpdatePageWatchers<true, false>(chunk, Chunk);
-                    }
+        }
+        for (const auto& [key, buffer] : host_spans) {
+            for (VAddr chunk = buffer->CpuAddr(); chunk < buffer->CpuAddr() + buffer->SizeBytes(); chunk += Chunk) {
+                HostSample& sample = host_samples[chunk];
+                if (!sample.watching && !sample.demoted && (round || sample.windows < 4)) {
+                    sample.watching = true;
+                    sample.armed = now;
+                    page_manager->UpdatePageWatchers<true, false>(chunk, Chunk);
                 }
             }
         }
@@ -1284,6 +1295,62 @@ void BufferCache::DemoteHostChunk(VAddr chunk) {
     host_changed.store(true, std::memory_order_release);
     std::printf("Host buffers: %#llx rewritten while the GPU reads it, copied from now on\n",
                 (unsigned long long)chunk);
+    SaveRewrittenChunks();
+}
+
+namespace {
+/// The game's data folder (one per title), where the chunks found last time are kept.
+std::string RewrittenChunksPath() {
+    const char* data = std::getenv("SPARTAN_DATA_DIR");
+    return data && data[0] ? std::string(data) + "/host_rewritten.txt" : std::string();
+}
+} // namespace
+
+void BufferCache::LoadRewrittenChunks() {
+    const std::string path = RewrittenChunksPath();
+    if (path.empty()) {
+        return;
+    }
+    std::ifstream file(path);
+    constexpr u64 Chunk = 1ull << HOST_CHUNK_SHIFT;
+    std::string line;
+    std::scoped_lock lock{host_mutex};
+    while (std::getline(file, line) && host_demoted.size() < MaxRewrittenChunks) {
+        const VAddr chunk = std::strtoull(line.c_str(), nullptr, 16) & ~(Chunk - 1);
+        if (chunk && std::ranges::none_of(host_demoted, [&](const HostRegion& r) { return r.start == chunk; })) {
+            host_demoted.push_back({chunk, chunk + Chunk});
+        }
+    }
+    if (!host_demoted.empty()) {
+        std::printf("Host buffers: %zu chunks the game rewrote last time copied from the start (%s)\n",
+                    host_demoted.size(), path.c_str());
+    }
+}
+
+void BufferCache::SaveRewrittenChunks() {
+    const std::string path = RewrittenChunksPath();
+    if (path.empty()) {
+        return;
+    }
+    std::vector<VAddr> chunks;
+    {
+        std::scoped_lock lock{host_mutex};
+        for (const HostRegion& r : host_demoted) {
+            chunks.push_back(r.start);
+        }
+    }
+    // The newest last; the oldest go first once the list is full.
+    if (chunks.size() > MaxRewrittenChunks) {
+        chunks.erase(chunks.begin(), chunks.end() - MaxRewrittenChunks);
+    }
+    const std::string temp = path + ".tmp";
+    if (FILE* file = std::fopen(temp.c_str(), "w")) {
+        for (const VAddr chunk : chunks) {
+            std::fprintf(file, "%llx\n", (unsigned long long)chunk);
+        }
+        std::fclose(file);
+        std::rename(temp.c_str(), path.c_str());
+    }
 }
 
 void BufferCache::DownloadHost(VAddr device_addr, u64 size, const HostRegion& region) {

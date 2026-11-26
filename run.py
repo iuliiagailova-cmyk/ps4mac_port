@@ -241,6 +241,9 @@ def main():
         move_legacy_data(title_id, default_data_dir(title_id))
     data = Path(env.get('SPARTAN_DATA_DIR', default_data_dir(title_id)))
     legacy.copy_game_settings(data)
+    # The graphics service keeps per-game findings there (host_rewritten.txt: guest memory the game
+    # rewrites while the GPU reads it).
+    env['SPARTAN_DATA_DIR'] = str(data.resolve())
     out = data / 'out'
     out.mkdir(parents=True, exist_ok=True)
     env.setdefault('SPARTAN_CONFIG', str(data / 'spartanport.ini'))
