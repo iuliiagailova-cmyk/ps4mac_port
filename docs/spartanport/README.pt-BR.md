@@ -1,6 +1,10 @@
+> **Kept for reference.** This is SpartanPort's README (God of War III on Windows and Linux, with
+> its launcher), and the files next to it are SpartanPort's guides. ps4mac_port runs on macOS only
+> and has no launcher; see the [main README](../../README.md). Not updated for ps4mac_port.
+
 <p align="center">
-  <img src="packaging/icon/monogram.png" alt="SP" width="160"><br>
-  <img src="docs/images/spartanport-logo.png" alt="SpartanPort" width="600">
+  <br>
+  <img src="images/spartanport-logo.png" alt="SpartanPort" width="600">
 </p>
 
 # SpartanPort
@@ -156,11 +160,11 @@ A corrupção gráfica no Steam Deck/RADV é um problema conhecido do AppImage 2
   144 (para telas de 144 Hz) ou 240 (adaptado por Felipe Prado).
 - **Ultrawide (beta):** resoluções 21:9, 32:9 e 16:10 (3440x1440 testada) com campo de visão mais largo, em vez de
   uma imagem com zoom, já embutidas: escolha em **Resolução de renderização**, onde cada opção mostra a resolução
-  exata e a proporção da tela. As cutscenes mantêm as bordas 16:9 (veja [docs/ultrawide.md](docs/ultrawide.md)).
-  Os mods também podem trazer patches de jogo; o [mod Ultrawide](extras/mods/Ultrawide) é o mesmo para versões antigas.
+  exata e a proporção da tela. As cutscenes mantêm as bordas 16:9 (veja [docs/ultrawide.md](../ultrawide.md)).
+  Os mods também podem trazer patches de jogo; o [mod Ultrawide](../../extras/mods/Ultrawide) é o mesmo para versões antigas.
   **Como instalar um mod:** coloque o `.zip` (sem extrair) na pasta `mods`, ao lado do `SpartanPort.exe`; o
   jogo extrai sozinho. O mod Ultrawide e um instalador de um clique para a 2.2.0 estão explicados em
-  [extras/mods/Ultrawide](extras/mods/Ultrawide/README.md).
+  [extras/mods/Ultrawide](../../extras/mods/Ultrawide/README.md).
 - **Compilação de shaders em segundo plano:** os pipelines salvos carregam e compilam enquanto
   você joga. Ainda podem ocorrer travadas, efeitos ausentes durante a compilação e quedas
   temporárias de FPS; a abertura depende do cache, do driver de vídeo e da CPU.

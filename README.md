@@ -22,10 +22,12 @@ to 1080p itself; in-game menu → render resolution).
 |---|---|---|---|---|
 | Ratchet & Clank (2016) | CUSA01047 | played through several planets | level 30 (the game's cap), fights 21–26, Novalis 20–25 | [games/CUSA01047](games/CUSA01047/README.md) |
 | God of War III Remastered | CUSA01623 | menus, cutscenes and the first fight | first fight ~24 (1080p: ~15) | [games/CUSA01623](games/CUSA01623/README.md) |
+| The Last of Us Remastered | CUSA00552 | title screen, menus, New Game, the prologue, the first playable scene | title screen 35–37, first playable scene ~22 standing | [games/CUSA00552](games/CUSA00552/README.md) |
 
 A game without a profile still starts with the core's defaults (God of War III reached its first
 fight that way); a profile adds the game's patches — above all a render resolution patch, the main
-lever for FPS on an M1.
+lever for FPS on an M1. Some games need a patch to start at all: R&C and The Last of Us ask for
+memory at an address macOS reserves in every process, and their profiles move it.
 
 ## Requirements
 
@@ -54,6 +56,31 @@ PS4MAC_SERVICE=$PWD/out/service/ps4mac_service SPARTAN_GAME_DIR=/path/to/CUSA010
   `~/Library/Application Support/ps4mac_port/<Title ID>`; `SPARTAN_DATA_DIR` chooses another folder.
 - In game: Insert (or R3 + L2) opens the menu: render resolution, frame rate, overlay.
 - Environment variables override the profile and the core's defaults (`docs/architecture.md`).
+- The graphics service also keeps its findings for the game there: `host_rewritten.txt` lists guest
+  memory the game rewrites while the GPU reads it, so the next start copies it from the beginning.
+
+## Controls
+
+A controller (DualShock 4, DualSense, Xbox and others SDL knows) works as on the PS4. Without one,
+the keyboard:
+
+| Key | PS4 |
+|---|---|
+| W A S D | left stick |
+| arrow keys | right stick |
+| Space, Left Shift, E, Q | Cross, Circle, Square, Triangle |
+| 1, 3 | L1, R1 |
+| R, F | L2, R2 |
+| Z, C | L3, R3 |
+| I K J L | d-pad up, down, left, right |
+| Enter | Options |
+| Tab, Backspace | touchpad click, left and right side |
+| X, V | spin the left stick clockwise, counterclockwise |
+
+X and V are for "rotate the stick" prompts in any game: hold the direction the prompt starts from
+(W A S D), then X or V; the stick turns at full tilt, one turn in 0.6 s, without passing through
+the centre. `SPARTAN_KEY_MAP` remaps keys, for example `SPARTAN_KEY_MAP="cross=Q,spin_cw=G"`; a key
+mapped this way loses its default action.
 
 ## Adding a game
 
@@ -61,11 +88,23 @@ PS4MAC_SERVICE=$PWD/out/service/ps4mac_service SPARTAN_GAME_DIR=/path/to/CUSA010
 2. `python3 run.py --check-imports` lists the PS4 functions the runtime still lacks; they go into the
    shared runtime, never into a profile.
 3. `games/<TITLE_ID>/profile.toml` and a patch file for what is the game's own (a render resolution
-   patch, bug fixes), and a page with what was tested.
+   patch, bug fixes), and a page with what was tested. Patches: [docs/PATCHES.md](docs/PATCHES.md).
+
+The rule (`docs/architecture.md`, 4.1): everything that emulates the PS4 goes into the core, even
+when only one game shows the problem so far, so each new game improves the others. A profile holds
+only what is in the game's own code (an address or timeout it hard-codes, its render resolution)
+and its defaults and tests; a patch never hides a bug of the core.
 
 ## Documentation
 
-`docs/architecture.md` — the architecture, the plan, every measurement and decision.
+- [docs/architecture.md](docs/architecture.md) — the architecture, the plan, every measurement and
+  decision (in Russian).
+- [docs/PATCHES.md](docs/PATCHES.md) — game patches: the profile's patch file, signatures, render
+  resolution.
+- [docs/spartanport](docs/spartanport/README.md) — SpartanPort's documentation (its launcher, mods,
+  Windows and Linux), kept for reference and not updated for ps4mac_port. Design notes inherited
+  from SpartanPort (`docs/upscaler.md`, `docs/motion_vectors.md`, `docs/DEPTH_ADAPTIVE_TAA.md`,
+  `docs/parallel_gpu.md`, `docs/ultrawide.md`) stay next to the code that cites them.
 
 ## Credits
 

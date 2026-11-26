@@ -270,7 +270,7 @@ def main():
         print('Graphics: the last restart never reached the game; previous options restored', flush=True)
     # The profile's defaults: values given in the environment win, then spartanport.ini (for the
     # options it holds), then the profile.
-    # Game modules (code written for one game: God of War III's cheats, QTE and pause menu hooks)
+    # Game modules (code written for one game: God of War III's live engine frame rate and pause menu)
     # run only for a game whose profile names them; the runtime reads the list.
     env['SPARTAN_GAME_MODULES'] = ','.join(port_profile.modules) if port_profile else ''
     profile_env = port_profile.env if port_profile else {}

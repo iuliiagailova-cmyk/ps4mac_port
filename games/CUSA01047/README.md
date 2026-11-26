@@ -19,13 +19,17 @@
   renders its scene at; it scales the picture to its 1920×1080 output itself. 720p is the
   recommended setting on an M1 (1080p: level ~16 FPS, fights ~15).
 - `SPARTAN_HOST_BUFFERS_SKIP = 0x8900000000`: a 180 MiB range the game rewrites every frame stays
-  copied for the GPU (in place, the GPU read data the game had already overwritten).
+  copied for the GPU (in place, the GPU read data the game had already overwritten). Since
+  25.11.2026 the core finds such memory itself (it also found two chunks at `0x8883800000`); the
+  manual range stays because the old overexposure no longer shows in the tests, so dropping it cannot
+  be checked yet.
 
 ## Known issues
 
 - Lamps on Novalis: light spots on the floor sometimes blink when the camera turns (the GPU depth
   the game culls lights with arrives a frame or two late; every fix cost FPS — left as is).
 - Rare green vertical bars over fire for half a second.
+- An occasional black screen at start (a race, not found yet).
 - Buffer reads past a buffer's range return nearby data instead of 0 (the core's default for
   speed); `SPARTAN_SHADER_BOUNDS=1` checks every access (~13% slower) if a scene shows garbage.
 

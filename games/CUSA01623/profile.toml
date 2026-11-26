@@ -5,8 +5,8 @@
 title = "God of War III Remastered"
 title_ids = ["CUSA01623", "CUSA01715", "CUSA01720"]  # tested: CUSA01623 v01.00 (US)
 match_title = "God of War"
-# God of War III's module in the core: cheats, orb multipliers, live engine frame rate, enemy health
-# bar, QTE answers and the pause menu's Exit to Desktop (SpartanPort's features).
+# God of War III's module (games/CUSA01623/module): the live engine frame rate and the pause menu's
+# Exit to Desktop (SpartanPort's features that work in two processes).
 modules = ["god_of_war"]
 
 [patches]
@@ -19,3 +19,5 @@ app_ver = "01.02"
 # Lightning used to turn the screen white (the GPU read two chunks the game rewrites every frame);
 # since 25.11.2026 the core finds such chunks itself (BufferCache::SampleHostChunks: 0xec04400000
 # and 0xec41000000 here) and copies them: 0 of 89 and 0 of 95 frames white, 24.1 / 24.2 FPS.
+# Since 26.11.2026 a new chunk is checked at once (found in under a second: no white flash on the
+# first hits of a fight) and the ones found are kept in <data dir>/host_rewritten.txt.

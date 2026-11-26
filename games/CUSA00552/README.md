@@ -3,14 +3,15 @@
 | | |
 |---|---|
 | Dump tested | CUSA00552 (US), version 01.00, base game |
-| Mac | MacBook Pro M1, 8 GB |
+| Mac | MacBook Pro M1, 8 GB, macOS 27.2.1 |
 | Status | menus, New Game, the prologue cutscene and the first playable scene (Sarah's room) |
 | FPS | 720p: Sarah's room ~22 (standing); title screen 35–37 at 480p, 720p and 1080p alike; cutscene and loading screens 60 |
 | Not tested | playing beyond the first room; other regions and patches |
 
 ## Profile
 
-[`profile.toml`](profile.toml), [`patches.xml`](patches.xml) — one required patch:
+[`profile.toml`](profile.toml), [`patches.xml`](patches.xml) — three patches; without the first the
+game does not start:
 
 - **Bug Fix - Address Space Base** — the engine gives its memory areas 4 GiB slots starting at
   0x1000000000 and checks that each mapping lands exactly there. macOS reserves that range in every

@@ -1,6 +1,10 @@
+> **Kept for reference.** This is SpartanPort's README (God of War III on Windows and Linux, with
+> its launcher), and the files next to it are SpartanPort's guides. ps4mac_port runs on macOS only
+> and has no launcher; see the [main README](../../README.md). Not updated for ps4mac_port.
+
 <p align="center">
-  <img src="packaging/icon/monogram.png" alt="SP" width="160"><br>
-  <img src="docs/images/spartanport-logo.png" alt="SpartanPort" width="600">
+  <br>
+  <img src="images/spartanport-logo.png" alt="SpartanPort" width="600">
 </p>
 
 # SpartanPort
@@ -161,11 +165,11 @@ La corrupción gráfica en Steam Deck/RADV es un problema conocido del AppImage 
 - **Ultrawide (beta):** resoluciones 21:9, 32:9 y 16:10 (3440x1440 probada) con un campo de visión más ancho en
   lugar de una imagen con zoom, ya incluidas: elige una en **Resolución de render**, donde cada opción muestra la
   resolución exacta y la relación de aspecto. Las escenas de vídeo mantienen sus bordes 16:9 (ver
-  [docs/ultrawide.md](docs/ultrawide.md)). Los mods también pueden incluir parches del juego; el
-  [mod Ultrawide](extras/mods/Ultrawide) es lo mismo para versiones anteriores.
+  [docs/ultrawide.md](../ultrawide.md)). Los mods también pueden incluir parches del juego; el
+  [mod Ultrawide](../../extras/mods/Ultrawide) es lo mismo para versiones anteriores.
   **Cómo instalar un mod:** pon su `.zip` (sin descomprimir) en la carpeta `mods`, junto a `SpartanPort.exe`; el
   juego lo descomprime solo. El mod Ultrawide y un instalador de un clic para la 2.2.0 se explican en
-  [extras/mods/Ultrawide](extras/mods/Ultrawide/README.md).
+  [extras/mods/Ultrawide](../../extras/mods/Ultrawide/README.md).
 - **Compilación de shaders en segundo plano:** los pipelines guardados se cargan y compilan
   mientras jugás. Todavía puede haber tirones, efectos ausentes durante la compilación y caídas
   temporales de FPS; el inicio depende de la caché, del driver de video y de la CPU.

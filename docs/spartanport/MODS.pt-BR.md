@@ -1,3 +1,7 @@
+> **Kept for reference.** This is SpartanPort's README (God of War III on Windows and Linux, with
+> its launcher), and the files next to it are SpartanPort's guides. ps4mac_port runs on macOS only
+> and has no launcher; see the [main README](../../README.md). Not updated for ps4mac_port.
+
 # Mods de arquivos
 
 [English](MODS.md) | **Português** | [Español](MODS.es.md)
@@ -314,7 +318,7 @@ mods/
 
 Eles valem enquanto o mod está ativado (**Carregar mods** desligado também os desliga), e um patch
 com o mesmo nome de um embutido o substitui. Um `Resolution Patch - <largura>x<altura>` vira uma
-opção de **Render resolution**; o mod [Ultrawide](ultrawide.md) (`extras/mods/Ultrawide`) é o
+opção de **Render resolution**; o mod [Ultrawide](../ultrawide.md) (`extras/mods/Ultrawide`) é o
 exemplo. O formato, as regras e como testar um patch estão no
 [guia de patches](PATCHES.pt-BR.md#patches-em-mods).
 
